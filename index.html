@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>合作商管理</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 13px; color: #2C2C2A; background: #F7F6F2; min-height: 100vh; }
+  .app { max-width: 1280px; margin: 0 auto; padding: 24px 20px; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+  .header h1 { font-size: 18px; font-weight: 500; color: #2C2C2A; }
+  .header-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px; border: 0.5px solid rgba(0,0,0,0.2); background: #fff; font-size: 13px; cursor: pointer; transition: background 0.15s; color: #2C2C2A; white-space: nowrap; }
+  .btn:hover { background: #F1EFE8; }
+  .btn-primary { background: #185FA5; color: #fff; border-color: #185FA5; }
+  .btn-primary:hover { background: #0C447C; }
+  .btn-danger { color: #A32D2D; border-color: rgba(162,45,45,0.3); }
+  .btn-danger:hover { background: #FCEBEB; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-wechat { background: #07C160; color: #fff; border-color: #07C160; font-size: 15px; padding: 12px 32px; border-radius: 12px; }
+  .btn-wechat:hover { background: #06AD56; }
+  .filter-bar { background: #fff; border: 0.5px solid rgba(0,0,0,0.1); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .filter-bar label { font-size: 12px; color: #5F5E5A; white-space: nowrap; }
+  .filter-bar select, .filter-bar input[type="text"] { height: 32px; padding: 0 10px; border-radius: 8px; border: 0.5px solid rgba(0,0,0,0.2); font-size: 13px; min-width: 140px; background: #fff; color: #2C2C2A; }
+  .filter-bar select:focus, .filter-bar input:focus { outline: none; border-color: #185FA5; }
+  .filter-group { display: flex; align-items: center; gap: 6px; }
+  .table-card { background: #fff; border-radius: 12px; border: 0.5px solid rgba(0,0,0,0.1); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  th { background: #F7F6F2; font-size: 12px; font-weight: 500; color: #5F5E5A; padding: 10px 12px; text-align: left; border-bottom: 0.5px solid rgba(0,0,0,0.1); }
+  td { padding: 11px 12px; border-bottom: 0.5px solid rgba(0,0,0,0.06); vertical-align: middle; word-break: break-word; font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #FAFAF8; }
+  .col-no { width: 46px; }
+  .col-type { width: 96px; }
+  .col-name { width: 126px; }
+  .col-service { width: 110px; }
+  .col-custom { width: 150px; }
+  .col-status { width: 84px; }
+  .col-contract { width: 140px; }
+  .col-priority { width: 80px; }
+  .col-ops { width: 110px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+  .badge-active { background: #EAF3DE; color: #3B6D11; }
+  .badge-inactive { background: #F1EFE8; color: #5F5E5A; }
+  .badge-negotiating { background: #FAEEDA; color: #854F0B; }
+  .badge-suspended { background: #FCEBEB; color: #A32D2D; }
+  .badge-admin { background: #E6F1FB; color: #185FA5; }
+  .badge-guest { background: #F1EFE8; color: #5F5E5A; }
+  .priority-star { font-size: 14px; user-select: none; }
+  .star-filled { color: #EF9F27; }
+  .star-empty { color: #D3D1C7; }
+  .tag { display: inline-block; background: #E6F1FB; color: #185FA5; border-radius: 4px; padding: 1px 7px; font-size: 11px; margin: 1px; }
+  .empty-row td { text-align: center; color: #B4B2A9; padding: 32px; }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); display: none; align-items: center; justify-content: center; z-index: 100; }
+  .modal-overlay.active { display: flex; }
+  .modal { background: #fff; border-radius: 16px; padding: 24px; width: 540px; max-width: 95vw; max-height: 90vh; overflow-y: auto; }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .modal-header h2 { font-size: 16px; font-weight: 500; }
+  .modal-close { cursor: pointer; font-size: 18px; color: #888; border: none; background: none; line-height: 1; }
+  .form-row { margin-bottom: 14px; }
+  .form-row label { display: block; font-size: 12px; color: #5F5E5A; margin-bottom: 5px; font-weight: 500; }
+  .form-row input[type="text"], .form-row input[type="date"], .form-row select, .form-row textarea { width: 100%; padding: 8px 10px; border-radius: 8px; border: 0.5px solid rgba(0,0,0,0.2); font-size: 13px; font-family: inherit; color: #2C2C2A; }
+  .form-row input:focus, .form-row select:focus, .form-row textarea:focus { outline: none; border-color: #185FA5; }
+  .form-row textarea { resize: vertical; min-height: 100px; line-height: 1.6; }
+  .form-row .hint { font-size: 11px; color: #888780; margin-top: 4px; }
+  .cell-multiline { white-space: pre-wrap; word-break: break-word; line-height: 1.5; max-height: 72px; overflow-y: auto; }
+  .form-row .type-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .form-row .type-tag-item { display: inline-flex; align-items: center; gap: 4px; background: #E6F1FB; color: #185FA5; border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
+  .form-row .type-tag-item .del-btn { cursor: pointer; font-size: 14px; line-height: 1; color: #185FA5; }
+  .form-row .add-type-row { display: flex; gap: 8px; margin-top: 6px; }
+  .form-row .add-type-row input { flex: 1; }
+  .priority-selector { display: flex; gap: 6px; margin-top: 4px; }
+  .priority-btn { width: 30px; height: 30px; border-radius: 6px; border: 0.5px solid rgba(0,0,0,0.2); background: #fff; cursor: pointer; font-size: 13px; font-weight: 500; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
+  .priority-btn.selected { background: #185FA5; color: #fff; border-color: #185FA5; }
+  .priority-btn:hover:not(.selected) { background: #F1EFE8; }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; border-top: 0.5px solid rgba(0,0,0,0.1); padding-top: 16px; }
+  .type-manage-section { border: 0.5px solid rgba(0,0,0,0.1); border-radius: 8px; padding: 12px; background: #FAFAF8; min-height: 40px; }
+  .star-group { display: flex; gap: 2px; }
+  .contract-cell { display: flex; flex-direction: column; gap: 3px; }
+  .contract-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .dot-valid { background: #639922; }
+  .dot-expired { background: #E24B4A; }
+  .dot-pending { background: #EF9F27; }
+  .auto-expired-hint { display: inline-block; background: #FCEBEB; color: #A32D2D; font-size: 10px; border-radius: 3px; padding: 1px 5px; margin-left: 4px; }
+  .upload-area { border: 1px dashed rgba(0,0,0,0.2); border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; background: #FAFAF8; transition: border-color 0.15s; position: relative; }
+  .upload-area:hover, .upload-area.dragover { border-color: #185FA5; background: #E6F1FB; }
+  .upload-area input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .upload-area .upload-icon { font-size: 22px; margin-bottom: 4px; color: #888780; }
+  .upload-area .upload-text { font-size: 12px; color: #5F5E5A; }
+  .upload-area .upload-hint { font-size: 11px; color: #888780; margin-top: 2px; }
+  .uploaded-file { display: flex; align-items: center; gap: 8px; background: #EAF3DE; border-radius: 6px; padding: 6px 10px; margin-top: 8px; }
+  .uploaded-file .fname { font-size: 12px; color: #3B6D11; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .uploaded-file .fremove { cursor: pointer; color: #888; font-size: 14px; }
+  .parse-result { font-size: 11px; color: #854F0B; background: #FAEEDA; border-radius: 4px; padding: 4px 8px; margin-top: 6px; }
+  .type-edit-input { border: none; border-bottom: 1px solid #185FA5; background: transparent; font-size: 12px; color: #185FA5; width: 80px; outline: none; padding: 0 2px; font-family: inherit; }
+  .toast { position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%); background: #2C2C2A; color: #fff; padding: 8px 20px; border-radius: 8px; font-size: 13px; z-index: 999; opacity: 0; pointer-events: none; transition: opacity 0.2s; white-space: nowrap; }
+  .toast.show { opacity: 1; }
+  .sync-indicator { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #639922; }
+  .sync-indicator .dot { width: 6px; height: 6px; border-radius: 50%; background: #639922; animation: pulse 2s infinite; }
+  .sync-indicator.offline .dot { background: #E24B4A; animation: none; }
+  .sync-indicator.offline { color: #E24B4A; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* ===== 登录页 ===== */
+  .login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%); }
+  .login-card { background: #fff; border-radius: 20px; padding: 40px 36px; width: 380px; max-width: 92vw; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.08); }
+  .login-card .logo { font-size: 36px; margin-bottom: 8px; }
+  .login-card h2 { font-size: 20px; font-weight: 500; margin-bottom: 6px; color: #2C2C2A; }
+  .login-card .subtitle { font-size: 13px; color: #888780; margin-bottom: 28px; }
+  .login-card .wechat-icon { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: #07C160; color: #fff; font-size: 24px; margin-bottom: 16px; }
+  .login-input-group { margin-bottom: 16px; text-align: left; }
+  .login-input-group label { display: block; font-size: 12px; color: #5F5E5A; margin-bottom: 5px; font-weight: 500; }
+  .login-input-group input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.15); font-size: 14px; font-family: inherit; color: #2C2C2A; }
+  .login-input-group input:focus { outline: none; border-color: #07C160; box-shadow: 0 0 0 3px rgba(7,193,96,0.12); }
+
+  /* ===== 用户信息栏 ===== */
+  .user-bar { display: inline-flex; align-items: center; gap: 8px; background: #fff; border: 0.5px solid rgba(0,0,0,0.1); border-radius: 20px; padding: 4px 12px 4px 6px; font-size: 12px; }
+  .user-bar .avatar { width: 24px; height: 24px; border-radius: 50%; background: #07C160; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; }
+  .user-bar .role-tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; }
+  .user-bar .role-admin { background: #E6F1FB; color: #185FA5; }
+  .user-bar .role-guest { background: #F1EFE8; color: #888780; }
+
+  /* ===== 管理员面板 ===== */
+  .admin-card { background: #fff; border: 1px solid rgba(24,95,165,0.15); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .admin-card h3 { font-size: 14px; font-weight: 500; color: #185FA5; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+  .admin-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .admin-item { display: inline-flex; align-items: center; gap: 6px; background: #E6F1FB; border-radius: 8px; padding: 6px 10px; font-size: 12px; }
+  .admin-item .wx-icon { color: #07C160; font-size: 14px; }
+  .admin-item .remove-admin { cursor: pointer; color: #A32D2D; font-size: 14px; margin-left: 2px; }
+  .guest-item { display: inline-flex; align-items: center; gap: 6px; background: #F7F6F2; border-radius: 8px; padding: 6px 10px; font-size: 12px; }
+  .guest-item .promote-btn { cursor: pointer; color: #185FA5; font-size: 12px; border: 0.5px solid #185FA5; border-radius: 4px; padding: 1px 6px; background: #fff; }
+
+  /* ===== 游客提示 ===== */
+  .guest-hint { background: #FAEEDA; color: #854F0B; border-radius: 8px; padding: 10px 16px; margin-bottom: 16px; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+  .guest-hint .icon { font-size: 16px; }
+
+  @media (max-width: 900px) {
+    .col-custom, .col-contract { display: none; }
+    .app { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== 登录页 ===== -->
+<div class="login-page" id="loginPage">
+  <div class="login-card">
+    <div class="wechat-icon">&#128172;</div>
+    <h2>合作商管理系统</h2>
+    <div class="subtitle"></div>
+    <div class="login-input-group">
+      <label>账号</label>
+      <input type="text" id="loginNickname" placeholder="请输入您的账号" onkeydown="if(event.key==='Enter') doLogin()">
+    </div>
+    <button class="btn-wechat" onclick="doLogin()" style="width:100%;margin-top:8px">登入</button>
+  </div>
+</div>
+
+<!-- ===== 主应用 ===== -->
+<div class="app" id="mainApp" style="display:none">
+  <div class="header">
+    <h1>合作商管理</h1>
+    <div class="header-actions" id="headerActions">
+      <!-- 动态填充 -->
+    </div>
+  </div>
+
+  <!-- 游客提示 -->
+  <div class="guest-hint" id="guestHint" style="display:none">
+    <span class="icon">&#128274;</span>
+    <span>您当前为游客模式，仅支持浏览和筛选，如需编辑请联系管理员</span>
+  </div>
+
+  <!-- 管理员面板（仅管理员可见） -->
+  <div class="admin-card" id="adminPanel" style="display:none">
+    <h3>&#128101; 管理员管理</h3>
+    <div style="margin-bottom:10px">
+      <div style="font-size:12px;color:#5F5E5A;margin-bottom:6px;font-weight:500">当前管理员</div>
+      <div class="admin-list" id="adminList"></div>
+    </div>
+    <div>
+      <div style="font-size:12px;color:#5F5E5A;margin-bottom:6px;font-weight:500">在线游客 <span style="font-size:11px;color:#888780;font-weight:400">（点击「设为管理员」提升权限）</span></div>
+      <div class="admin-list" id="guestList"></div>
+      <div style="font-size:11px;color:#888780;margin-top:6px" id="noGuestHint">暂无在线游客</div>
+    </div>
+  </div>
+
+  <div class="filter-bar">
+    <div class="filter-group">
+      <label>业务类型</label>
+      <select id="filterType" onchange="applyFilter()">
+        <option value="">全部</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>合作状态</label>
+      <select id="filterStatus" onchange="applyFilter()">
+        <option value="">全部</option>
+        <option value="合作中">合作中</option>
+        <option value="洽谈中">洽谈中</option>
+        <option value="暂停合作">暂停合作</option>
+        <option value="已终止">已终止</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>优先级</label>
+      <select id="filterPriority" onchange="applyFilter()">
+        <option value="">全部</option>
+        <option value="5">★★★★★ 最高</option>
+        <option value="4">★★★★</option>
+        <option value="3">★★★</option>
+        <option value="2">★★</option>
+        <option value="1">★ 最低</option>
+      </select>
+    </div>
+    <div class="filter-group" style="margin-left:auto">
+      <input type="text" id="filterKeyword" placeholder="搜索名称/服务/定制化问题/合同..." oninput="applyFilter()" style="min-width:220px">
+    </div>
+    <button class="btn btn-sm" onclick="resetFilter()">重置</button>
+  </div>
+
+  <div class="table-card">
+    <table>
+      <colgroup>
+        <col class="col-no"><col class="col-type"><col class="col-name"><col class="col-service">
+        <col class="col-custom"><col class="col-status"><col class="col-contract">
+        <col class="col-priority"><col class="col-ops">
+      </colgroup>
+      <thead>
+        <tr>
+          <th>序号</th>
+          <th>业务类型</th>
+          <th>合作方名称</th>
+          <th>服务类型</th>
+          <th>定制化问题</th>
+          <th>合作状态</th>
+          <th>合同管理</th>
+          <th>优先级</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 新增/编辑弹窗 -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modalTitle">新增合作商</h2>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="form-row">
+      <label>合作方名称 <span style="color:#E24B4A">*</span></label>
+      <input type="text" id="fieldName" placeholder="请输入合作方名称">
+    </div>
+    <div class="form-row">
+      <label>业务类型 <span style="color:#E24B4A">*</span></label>
+      <select id="fieldType">
+        <option value="">请选择业务类型</option>
+      </select>
+      <div class="hint">如需新增业务类型，请点击顶部「管理业务类型」</div>
+    </div>
+    <div class="form-row">
+      <label>服务类型 <span style="font-size:11px;color:#888780;font-weight:400">（支持换行）</span></label>
+      <textarea id="fieldService" placeholder="请输入服务类型" rows="2"></textarea>
+    </div>
+    <div class="form-row">
+      <label>定制化问题 <span style="font-size:11px;color:#888780;font-weight:400">（支持换行，Enter 键换行排版）</span></label>
+      <textarea id="fieldCustom" placeholder="请描述定制化需求或特殊问题..." rows="4"></textarea>
+    </div>
+    <div class="form-row">
+      <label>合作状态</label>
+      <select id="fieldStatus">
+        <option value="洽谈中">洽谈中</option>
+        <option value="合作中">合作中</option>
+        <option value="暂停合作">暂停合作</option>
+        <option value="已终止">已终止</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>合同编号</label>
+      <input type="text" id="fieldContract" placeholder="如：HT-2024-001">
+    </div>
+    <div class="form-row">
+      <label>合同状态 <span id="autoExpiredBadge" class="auto-expired-hint" style="display:none">自动识别已过期</span></label>
+      <select id="fieldContractStatus">
+        <option value="pending">待签署</option>
+        <option value="valid">有效</option>
+        <option value="expired">已过期</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>合同到期日</label>
+      <input type="date" id="fieldContractExpiry" onchange="autoCheckExpiry()">
+    </div>
+    <div class="form-row">
+      <label>上传合同文件</label>
+      <div class="upload-area" id="uploadArea">
+        <input type="file" id="contractFileInput" accept=".pdf,.txt,.doc,.docx" onchange="handleFileUpload(event)">
+        <div class="upload-icon">&#128196;</div>
+        <div class="upload-text">点击或拖拽上传合同文件</div>
+        <div class="upload-hint">支持 PDF / TXT / DOC，将自动识别到期日期</div>
+      </div>
+      <div id="uploadedFileInfo" style="display:none"></div>
+      <div id="parseResultInfo" style="display:none"></div>
+    </div>
+    <div class="form-row">
+      <label>优先级</label>
+      <div class="priority-selector" id="prioritySelector">
+        <button class="priority-btn" onclick="setPriority(1)">1</button>
+        <button class="priority-btn" onclick="setPriority(2)">2</button>
+        <button class="priority-btn" onclick="setPriority(3)">3</button>
+        <button class="priority-btn" onclick="setPriority(4)">4</button>
+        <button class="priority-btn" onclick="setPriority(5)">5</button>
+      </div>
+      <div class="hint">1 = 最低，5 = 最高</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveRecord()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 管理业务类型弹窗 -->
+<div class="modal-overlay" id="typeModal">
+  <div class="modal" style="width:420px">
+    <div class="modal-header">
+      <h2>管理业务类型</h2>
+      <button class="modal-close" onclick="closeTypeModal()">&times;</button>
+    </div>
+    <div class="form-row">
+      <label>已有业务类型 <span style="font-size:11px;color:#888780;font-weight:400">（双击名称可直接修改）</span></label>
+      <div class="type-manage-section">
+        <div id="typeTagList" class="type-tags"></div>
+        <div style="color:#B4B2A9;font-size:12px;margin-top:4px;display:none" id="typeEmptyHint">暂无业务类型</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>新增业务类型</label>
+      <div class="add-type-row">
+        <input type="text" id="newTypeInput" placeholder="输入新业务类型名称" onkeydown="if(event.key==='Enter') addType()">
+        <button class="btn btn-primary btn-sm" onclick="addType()">添加</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeTypeModal()">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- 删除确认弹窗 -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal" style="width:360px">
+    <div class="modal-header">
+      <h2>确认删除</h2>
+      <button class="modal-close" onclick="closeConfirm()">&times;</button>
+    </div>
+    <p style="color:#5F5E5A;margin-bottom:20px">确认删除该合作商记录？此操作不可撤销。</p>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeConfirm()">取消</button>
+      <button class="btn btn-danger" onclick="confirmDelete()">确认删除</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// ========== Supabase 配置 ==========
+const SUPABASE_URL = 'https://diprrfwnofwrfrpwkekz.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpcHJyZndub2Z3cmZycHdrZWt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MjI0ODMsImV4cCI6MjA5NDM5ODQ4M30.CMfvCauFPSgJTEzDfk8mZGDmaJ2WZ9Nv7jOz4aTD5YA';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ========== 全局状态 ==========
+let records = [];
+let businessTypes = [];
+let admins = [];          // [{wechat_id, nickname}]
+let onlineUsers = [];     // [{wechat_id, nickname, last_seen}]
+let editingId = null;
+let deletingId = null;
+let currentPriority = 3;
+let filteredRecords = [];
+let _syncingFromRemote = false;
+
+// 当前登录用户
+let currentUser = null;   // {wechat_id, nickname, role: 'admin'|'guest'}
+
+// 默认超级管理员微信号
+const SUPER_ADMIN_WECHAT = 'xijiekongjian';
+
+// ========== 登录系统 ==========
+function doLogin() {
+  const nickname = document.getElementById('loginNickname').value.trim();
+  if (!nickname) { alert('请输入账号'); return; }
+
+  currentUser = {
+    wechat_id: nickname,
+    nickname: nickname,
+    role: 'guest' // 默认游客，后面根据 admins 列表判断
+  };
+
+  // 持久化登录状态
+  localStorage.setItem('pm_currentUser', JSON.stringify(currentUser));
+
+  // 注册在线状态
+  registerOnline();
+
+  // 进入主界面
+  enterApp();
+}
+
+function enterApp() {
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('mainApp').style.display = 'block';
+  initApp();
+}
+
+function doLogout() {
+  // 清除在线状态
+  if (currentUser) {
+    sb.from('partner_online').delete().eq('wechat_id', currentUser.wechat_id).then(() => {});
+  }
+  localStorage.removeItem('pm_currentUser');
+  currentUser = null;
+  document.getElementById('loginPage').style.display = 'flex';
+  document.getElementById('mainApp').style.display = 'none';
+}
+
+function checkUserRole() {
+  if (!currentUser) return;
+  const isAdmin = admins.some(a => a.wechat_id === currentUser.wechat_id);
+  currentUser.role = isAdmin ? 'admin' : 'guest';
+}
+
+function requireAdmin(action) {
+  if (!currentUser || currentUser.role !== 'admin') {
+    showToast('游客无权操作，请联系管理员');
+    return false;
+  }
+  return true;
+}
+
+// 注册在线心跳
+async function registerOnline() {
+  if (!currentUser) return;
+  try {
+    await sb.from('partner_online').upsert({
+      wechat_id: currentUser.wechat_id,
+      nickname: currentUser.nickname,
+      last_seen: new Date().toISOString()
+    }, { onConflict: 'wechat_id' });
+  } catch (e) { console.warn('注册在线状态失败:', e); }
+}
+
+// 定时心跳（每30秒）
+setInterval(() => {
+  if (currentUser) registerOnline();
+}, 30000);
+
+// 清理离线用户（超过2分钟未心跳）
+async function cleanOfflineUsers() {
+  try {
+    const twoMinAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    await sb.from('partner_online').delete().lt('last_seen', twoMinAgo);
+  } catch (e) { console.warn('清理离线用户失败:', e); }
+}
+setInterval(cleanOfflineUsers, 60000);
+
+// ========== 数据同步：Supabase <--> 本地 ==========
+
+function recordToRow(r) {
+  return {
+    id: r.id, name: r.name, type: r.type || '', service: r.service || '',
+    custom: r.custom || '', status: r.status || '洽谈中', contract: r.contract || '',
+    contract_status: r.contractStatus || 'pending', contract_expiry: r.contractExpiry || '',
+    priority: r.priority || 3, contract_file: r.contractFile || '',
+    updated_at: new Date().toISOString()
+  };
+}
+function rowToRecord(row) {
+  return {
+    id: row.id, name: row.name, type: row.type, service: row.service,
+    custom: row.custom, status: row.status, contract: row.contract,
+    contractStatus: row.contract_status, contractExpiry: row.contract_expiry,
+    priority: row.priority, contractFile: row.contract_file
+  };
+}
+
+async function saveData(opts = {}) {
+  localStorage.setItem('partnerRecords', JSON.stringify(records));
+  localStorage.setItem('partnerTypes', JSON.stringify(businessTypes));
+  try {
+    _syncingFromRemote = true;
+
+    if (opts.deletedRecordId != null) {
+      const { error } = await sb.from('partner_records').delete().eq('id', opts.deletedRecordId);
+      if (error) console.warn('删除记录同步失败:', error.message);
+    } else if (opts.upsertRecordId != null) {
+      const rec = records.find(r => r.id === opts.upsertRecordId);
+      if (rec) {
+        const row = recordToRow(rec);
+        const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
+        if (error) console.warn('同步记录失败:', error.message);
+      }
+    } else {
+      for (const rec of records) {
+        const row = recordToRow(rec);
+        const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
+        if (error) console.warn('同步记录失败:', error.message);
+      }
+    }
+
+    if (opts.typeDeletedName) {
+      const { error } = await sb.from('partner_types').delete().eq('name', opts.typeDeletedName);
+      if (error) console.warn('删除类型同步失败:', error.message);
+    }
+    for (let i = 0; i < businessTypes.length; i++) {
+      const typeRow = { id: i + 1, name: businessTypes[i] };
+      const { error } = await sb.from('partner_types').upsert(typeRow, { onConflict: 'id' });
+      if (error) console.warn('同步类型失败:', error.message);
+    }
+    const { data: existingTypes } = await sb.from('partner_types').select('id').order('id');
+    if (existingTypes && existingTypes.length > businessTypes.length) {
+      const idsToDelete = existingTypes.slice(businessTypes.length).map(t => t.id);
+      for (const did of idsToDelete) {
+        await sb.from('partner_types').delete().eq('id', did);
+      }
+    }
+  } catch (err) {
+    console.warn('Supabase 同步异常:', err);
+  } finally {
+    setTimeout(() => { _syncingFromRemote = false; }, 800);
+  }
+}
+
+async function loadFromSupabase() {
+  try {
+    const { data: recordsData, error: e1 } = await sb.from('partner_records').select('*').order('id');
+    if (!e1 && recordsData) {
+      records = recordsData.map(rowToRecord);
+    } else if (e1) {
+      console.warn('加载 records 失败:', e1.message);
+      records = JSON.parse(localStorage.getItem('partnerRecords') || '[]');
+    }
+
+    const { data: typesData, error: e2 } = await sb.from('partner_types').select('*').order('id');
+    if (!e2 && typesData && typesData.length > 0) {
+      businessTypes = typesData.map(t => t.name);
+    } else if (e2 || !typesData || typesData.length === 0) {
+      if (e2) console.warn('加载 types 失败:', e2.message);
+      const localTypes = JSON.parse(localStorage.getItem('partnerTypes') || '[]');
+      businessTypes = localTypes.length > 0 ? localTypes : ['技术服务','营销推广','供应链','物流配送','金融服务','内容创作'];
+    }
+
+    // 加载管理员列表
+    const { data: adminsData, error: e3 } = await sb.from('partner_admins').select('*');
+    if (!e3 && adminsData) {
+      admins = adminsData.map(a => ({ wechat_id: a.wechat_id, nickname: a.nickname || a.wechat_id }));
+    }
+    // 确保超级管理员在列表中
+    if (!admins.some(a => a.wechat_id === SUPER_ADMIN_WECHAT)) {
+      admins.push({ wechat_id: SUPER_ADMIN_WECHAT, nickname: SUPER_ADMIN_WECHAT });
+      await sb.from('partner_admins').upsert({ wechat_id: SUPER_ADMIN_WECHAT, nickname: SUPER_ADMIN_WECHAT }, { onConflict: 'wechat_id' });
+    }
+
+    // 加载在线用户
+    const { data: onlineData } = await sb.from('partner_online').select('*').order('last_seen', { ascending: false });
+    onlineUsers = onlineData || [];
+
+    // Supabase 为空时回写本地缓存
+    if (records.length === 0 && localStorage.getItem('partnerRecords')) {
+      records = JSON.parse(localStorage.getItem('partnerRecords') || '[]');
+      if (records.length > 0) {
+        showToast('正在同步本地数据到云端...');
+        await saveData();
+      }
+    }
+    if (businessTypes.length === 0) {
+      const localTypes = JSON.parse(localStorage.getItem('partnerTypes') || '[]');
+      businessTypes = localTypes.length > 0 ? localTypes : ['技术服务','营销推广','供应链','物流配送','金融服务','内容创作'];
+      if (businessTypes.length > 0) await saveData();
+    }
+
+    localStorage.setItem('partnerRecords', JSON.stringify(records));
+    localStorage.setItem('partnerTypes', JSON.stringify(businessTypes));
+  } catch (err) {
+    console.warn('Supabase 加载失败，使用本地缓存:', err);
+    records = JSON.parse(localStorage.getItem('partnerRecords') || '[]');
+    const localTypes = JSON.parse(localStorage.getItem('partnerTypes') || '[]');
+    businessTypes = localTypes.length > 0 ? localTypes : ['技术服务','营销推广','供应链','物流配送','金融服务','内容创作'];
+  }
+}
+
+// ========== 实时订阅（改进版）==========
+let _realtimeChannel = null;
+
+function initRealtimeSubscription() {
+  if (_realtimeChannel) {
+    sb.removeChannel(_realtimeChannel);
+  }
+  _realtimeChannel = sb.channel('partner-all-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_records' }, payload => {
+      if (_syncingFromRemote) return;
+      handleRecordChange(payload);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_types' }, payload => {
+      if (_syncingFromRemote) return;
+      handleTypeChange(payload);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_admins' }, payload => {
+      handleAdminChange(payload);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_online' }, payload => {
+      handleOnlineChange(payload);
+    })
+    .subscribe();
+}
+
+function handleRecordChange(payload) {
+  const { eventType, new: newRow, old: oldRow } = payload;
+  if (eventType === 'INSERT') {
+    const rec = rowToRecord(newRow);
+    if (!records.find(r => r.id === rec.id)) records.push(rec);
+  } else if (eventType === 'UPDATE') {
+    const rec = rowToRecord(newRow);
+    const idx = records.findIndex(r => r.id === rec.id);
+    if (idx >= 0) records[idx] = rec; else records.push(rec);
+  } else if (eventType === 'DELETE') {
+    records = records.filter(r => r.id !== oldRow.id);
+  }
+  localStorage.setItem('partnerRecords', JSON.stringify(records));
+  refreshTypeSelects();
+  applyFilter();
+  showToast('数据已同步更新');
+}
+
+async function handleTypeChange(payload) {
+  const { eventType, new: newRow } = payload;
+  if (eventType === 'INSERT') {
+    if (!businessTypes.includes(newRow.name)) businessTypes.push(newRow.name);
+  } else if (eventType === 'UPDATE') {
+    // 需要重新排序加载
+    const { data } = await sb.from('partner_types').select('*').order('id');
+    if (data) businessTypes = data.map(t => t.name);
+  } else if (eventType === 'DELETE') {
+    // 不确定删了哪个name，重新加载
+    const { data } = await sb.from('partner_types').select('*').order('id');
+    if (data) businessTypes = data.map(t => t.name);
+  }
+  localStorage.setItem('partnerTypes', JSON.stringify(businessTypes));
+  refreshTypeSelects();
+  applyFilter();
+}
+
+async function handleAdminChange(payload) {
+  const { eventType, new: newRow, old: oldRow } = payload;
+  if (eventType === 'INSERT') {
+    if (!admins.some(a => a.wechat_id === newRow.wechat_id)) {
+      admins.push({ wechat_id: newRow.wechat_id, nickname: newRow.nickname || newRow.wechat_id });
+    }
+  } else if (eventType === 'DELETE') {
+    admins = admins.filter(a => a.wechat_id !== oldRow.wechat_id);
+  }
+  checkUserRole();
+  updateUI();
+  renderAdminPanel();
+}
+
+function handleOnlineChange(payload) {
+  const { eventType, new: newRow, old: oldRow } = payload;
+  if (eventType === 'INSERT') {
+    if (!onlineUsers.some(u => u.wechat_id === newRow.wechat_id)) {
+      onlineUsers.push(newRow);
+    }
+  } else if (eventType === 'UPDATE') {
+    const idx = onlineUsers.findIndex(u => u.wechat_id === newRow.wechat_id);
+    if (idx >= 0) onlineUsers[idx] = newRow; else onlineUsers.push(newRow);
+  } else if (eventType === 'DELETE') {
+    onlineUsers = onlineUsers.filter(u => u.wechat_id !== oldRow.wechat_id);
+  }
+  renderAdminPanel();
+}
+
+// ========== 管理员操作 ==========
+async function promoteToAdmin(wechatId, nickname) {
+  if (!requireAdmin()) return;
+  try {
+    _syncingFromRemote = true;
+    const { error } = await sb.from('partner_admins').upsert({ wechat_id: wechatId, nickname: nickname || wechatId }, { onConflict: 'wechat_id' });
+    if (error) { showToast('设置管理员失败: ' + error.message); return; }
+    if (!admins.some(a => a.wechat_id === wechatId)) {
+      admins.push({ wechat_id: wechatId, nickname: nickname || wechatId });
+    }
+    checkUserRole();
+    renderAdminPanel();
+    showToast(`已将「${nickname || wechatId}」设为管理员`);
+  } catch (e) {
+    console.warn('设置管理员失败:', e);
+  } finally {
+    setTimeout(() => { _syncingFromRemote = false; }, 800);
+  }
+}
+
+async function removeAdmin(wechatId) {
+  if (!requireAdmin()) return;
+  if (wechatId === SUPER_ADMIN_WECHAT) { showToast('无法移除超级管理员'); return; }
+  if (wechatId === currentUser.wechat_id) { showToast('无法移除自己'); return; }
+  try {
+    _syncingFromRemote = true;
+    const { error } = await sb.from('partner_admins').delete().eq('wechat_id', wechatId);
+    if (error) { showToast('移除管理员失败: ' + error.message); return; }
+    admins = admins.filter(a => a.wechat_id !== wechatId);
+    checkUserRole();
+    renderAdminPanel();
+    showToast('已移除管理员权限');
+  } catch (e) {
+    console.warn('移除管理员失败:', e);
+  } finally {
+    setTimeout(() => { _syncingFromRemote = false; }, 800);
+  }
+}
+
+function renderAdminPanel() {
+  if (!currentUser || currentUser.role !== 'admin') {
+    document.getElementById('adminPanel').style.display = 'none';
+    return;
+  }
+  document.getElementById('adminPanel').style.display = 'block';
+
+  // 管理员列表
+  const adminListEl = document.getElementById('adminList');
+  adminListEl.innerHTML = admins.map(a => {
+    const isSuper = a.wechat_id === SUPER_ADMIN_WECHAT;
+    const isSelf = currentUser && a.wechat_id === currentUser.wechat_id;
+    const removeBtn = (isSuper || isSelf) ? '' : `<span class="remove-admin" onclick="removeAdmin('${a.wechat_id}')" title="移除管理员">&#215;</span>`;
+    return `<div class="admin-item">
+      <span class="wx-icon">&#128172;</span>
+      <span>${escapeHtml(a.nickname || a.wechat_id)}</span>
+      ${isSuper ? '<span style="font-size:10px;color:#185FA5">超级管理员</span>' : ''}
+      ${removeBtn}
+    </div>`;
+  }).join('');
+
+  // 在线游客列表（非管理员的在线用户）
+  const guestListEl = document.getElementById('guestList');
+  const noGuestHint = document.getElementById('noGuestHint');
+  const guestUsers = onlineUsers.filter(u => !admins.some(a => a.wechat_id === u.wechat_id));
+  if (guestUsers.length === 0) {
+    guestListEl.innerHTML = '';
+    noGuestHint.style.display = 'block';
+  } else {
+    noGuestHint.style.display = 'none';
+    guestListEl.innerHTML = guestUsers.map(u => `
+      <div class="guest-item">
+        <span class="wx-icon" style="color:#888">&#128172;</span>
+        <span>${escapeHtml(u.nickname || u.wechat_id)}</span>
+        <button class="promote-btn" onclick="promoteToAdmin('${u.wechat_id}','${escapeAttr(u.nickname || u.wechat_id)}')">设为管理员</button>
+      </div>
+    `).join('');
+  }
+}
+
+// ========== UI 更新 ==========
+function updateUI() {
+  const actions = document.getElementById('headerActions');
+  const guestHint = document.getElementById('guestHint');
+  const isAdmin = currentUser && currentUser.role === 'admin';
+
+  // 用户信息栏
+  const roleTag = isAdmin
+    ? '<span class="role-tag role-admin">管理员</span>'
+    : '<span class="role-tag role-guest">游客</span>';
+  const avatarLetter = currentUser ? (currentUser.nickname || '').charAt(0).toUpperCase() : '?';
+
+  let html = `<div class="user-bar">
+    <div class="avatar">${avatarLetter}</div>
+    <span>${currentUser ? escapeHtml(currentUser.nickname) : ''}</span>
+    ${roleTag}
+  </div>`;
+
+  if (isAdmin) {
+    html += `<button class="btn" onclick="openTypeManager()">管理业务类型</button>`;
+    html += `<button class="btn btn-primary" onclick="openAddModal()">+ 新增合作商</button>`;
+  }
+
+  html += '<div class="sync-indicator" id="syncIndicator"><span class="dot"></span>实时同步中</div>';
+  html += `<button class="btn btn-sm" onclick="doLogout()" style="margin-left:4px">退出</button>`;
+
+  actions.innerHTML = html;
+  guestHint.style.display = isAdmin ? 'none' : 'flex';
+}
+
+// ========== 自动评估合同状态 ==========
+function autoEvalContractStatus() {
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  let updated = 0;
+  records.forEach(r => {
+    if (r.contractExpiry && r.contractStatus !== 'expired') {
+      const exp = new Date(r.contractExpiry);
+      exp.setHours(0,0,0,0);
+      if (exp < today) { r.contractStatus = 'expired'; updated++; }
+    }
+  });
+  if (updated > 0) {
+    saveData();
+    showToast(`已自动更新 ${updated} 条合同状态为「已过期」`);
+  }
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function getStatusBadge(status) {
+  const map = { '合作中': 'badge-active', '洽谈中': 'badge-negotiating', '暂停合作': 'badge-inactive', '已终止': 'badge-suspended' };
+  return `<span class="badge ${map[status] || 'badge-inactive'}">${status}</span>`;
+}
+
+function getContractDot(status) {
+  const map = { valid: 'dot-valid', expired: 'dot-expired', pending: 'dot-pending' };
+  const label = { valid: '有效', expired: '已过期', pending: '待签署' };
+  return `<span class="contract-status-dot ${map[status] || 'dot-pending'}"></span>${label[status] || '-'}`;
+}
+
+function getStars(priority) {
+  let html = '<span class="star-group">';
+  for (let i = 1; i <= 5; i++) {
+    html += `<span class="priority-star ${i <= priority ? 'star-filled' : 'star-empty'}">★</span>`;
+  }
+  return html + '</span>';
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\n/g,'<br>');
+}
+
+function escapeAttr(str) {
+  if (!str) return '';
+  return str.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+}
+
+// ========== 搜索：全字段模糊匹配 ==========
+function applyFilter() {
+  const typeF = document.getElementById('filterType').value;
+  const statusF = document.getElementById('filterStatus').value;
+  const priorityF = document.getElementById('filterPriority').value;
+  const keyword = document.getElementById('filterKeyword').value.trim().toLowerCase();
+  filteredRecords = records.filter(r => {
+    if (typeF && r.type !== typeF) return false;
+    if (statusF && r.status !== statusF) return false;
+    if (priorityF && r.priority !== parseInt(priorityF)) return false;
+    // 全字段模糊搜索
+    if (keyword) {
+      const searchFields = [r.name, r.type, r.service, r.custom, r.contract, r.status].filter(Boolean);
+      const match = searchFields.some(f => f.toLowerCase().includes(keyword));
+      if (!match) return false;
+    }
+    return true;
+  });
+  filteredRecords.sort((a, b) => (b.priority || 1) - (a.priority || 1));
+  const tbody = document.getElementById('tableBody');
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  if (!filteredRecords.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">暂无数据</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filteredRecords.map((r, i) => {
+    const autoExpiredTip = r.contractStatus === 'expired' && r.contractExpiry && new Date(r.contractExpiry) < new Date()
+      ? '<span class="auto-expired-hint">已过期</span>' : '';
+    const fileIcon = r.contractFile ? `<span style="font-size:11px;color:#185FA5" title="${r.contractFile}">&#128196; ${r.contractFile.length > 10 ? r.contractFile.slice(0,10)+'…' : r.contractFile}</span>` : '';
+    const customDisplay = r.custom ? escapeHtml(r.custom) : '-';
+    const opsHtml = isAdmin
+      ? `<div style="display:flex;gap:6px">
+          <button class="btn btn-sm" onclick="openEditModal(${r.id})">编辑</button>
+          <button class="btn btn-sm btn-danger" onclick="openConfirm(${r.id})">删除</button>
+        </div>`
+      : '<span style="color:#B4B2A9;font-size:11px">仅浏览</span>';
+    return `<tr>
+      <td>${i + 1}</td>
+      <td>${r.type ? `<span class="tag">${r.type}</span>` : '-'}</td>
+      <td style="font-weight:500">${escapeHtml(r.name)}</td>
+      <td><div class="cell-multiline">${r.service ? escapeHtml(r.service) : '-'}</div></td>
+      <td style="color:#5F5E5A"><div class="cell-multiline">${customDisplay}</div></td>
+      <td>${getStatusBadge(r.status)}</td>
+      <td>
+        <div class="contract-cell">
+          <span style="font-size:12px;color:#5F5E5A" class="cell-multiline">${r.contract ? escapeHtml(r.contract) : '-'}</span>
+          <span style="font-size:11px;display:flex;align-items:center;gap:4px">${getContractDot(r.contractStatus)}${autoExpiredTip}</span>
+          ${r.contractExpiry ? `<span style="font-size:11px;color:#888780">到期：${r.contractExpiry}</span>` : ''}
+          ${fileIcon}
+        </div>
+      </td>
+      <td>${getStars(r.priority || 1)}</td>
+      <td>${opsHtml}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderTable() { applyFilter(); }
+
+function resetFilter() {
+  document.getElementById('filterType').value = '';
+  document.getElementById('filterStatus').value = '';
+  document.getElementById('filterPriority').value = '';
+  document.getElementById('filterKeyword').value = '';
+  applyFilter();
+}
+
+function refreshTypeSelects() {
+  const selects = [document.getElementById('filterType'), document.getElementById('fieldType')];
+  selects.forEach((sel, idx) => {
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = idx === 0 ? '<option value="">全部</option>' : '<option value="">请选择业务类型</option>';
+    businessTypes.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t; opt.textContent = t;
+      sel.appendChild(opt);
+    });
+    sel.value = cur;
+  });
+}
+
+// ---- 合同到期自动检测 ----
+function autoCheckExpiry() {
+  const expiry = document.getElementById('fieldContractExpiry').value;
+  const badge = document.getElementById('autoExpiredBadge');
+  const statusSel = document.getElementById('fieldContractStatus');
+  if (expiry) {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const exp = new Date(expiry);
+    if (exp < today) { statusSel.value = 'expired'; badge.style.display = 'inline-block'; }
+    else { badge.style.display = 'none'; }
+  } else { badge.style.display = 'none'; }
+}
+
+// ---- 合同文件上传 + 智能解析 ----
+function handleFileUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const infoEl = document.getElementById('uploadedFileInfo');
+  const parseEl = document.getElementById('parseResultInfo');
+  infoEl.style.display = 'block';
+  infoEl.innerHTML = `<div class="uploaded-file"><span class="fname">&#128196; ${file.name}</span><span class="fremove" onclick="clearUpload()">&#215;</span></div>`;
+  parseEl.style.display = 'none';
+  if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+    const reader = new FileReader();
+    reader.onload = (e) => extractDateFromText(e.target.result, file.name);
+    reader.readAsText(file, 'utf-8');
+  } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+    parsePdfFile(file);
+  } else {
+    parseEl.style.display = 'block'; parseEl.className = 'parse-result';
+    parseEl.textContent = '暂不支持自动解析此格式，请手动填写到期日期。';
+  }
+  window._currentContractFile = file.name;
+}
+
+function clearUpload() {
+  document.getElementById('uploadedFileInfo').style.display = 'none';
+  document.getElementById('parseResultInfo').style.display = 'none';
+  document.getElementById('contractFileInput').value = '';
+  window._currentContractFile = '';
+}
+
+function parsePdfFile(file) {
+  const parseEl = document.getElementById('parseResultInfo');
+  if (window.pdfjsLib) { doPdfParse(file); return; }
+  const script = document.createElement('script');
+  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+  script.onload = () => {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    doPdfParse(file);
+  };
+  script.onerror = () => { parseEl.style.display = 'block'; parseEl.className = 'parse-result'; parseEl.textContent = 'PDF 解析库加载失败，请手动填写到期日期。'; };
+  document.head.appendChild(script);
+}
+
+function doPdfParse(file) {
+  const parseEl = document.getElementById('parseResultInfo');
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const typedArray = new Uint8Array(e.target.result);
+    window.pdfjsLib.getDocument(typedArray).promise.then(pdf => {
+      let fullText = '';
+      const total = Math.min(pdf.numPages, 5);
+      let done = 0;
+      for (let i = 1; i <= total; i++) {
+        pdf.getPage(i).then(page => {
+          page.getTextContent().then(tc => {
+            fullText += tc.items.map(x => x.str).join(' ') + ' ';
+            done++;
+            if (done === total) extractDateFromText(fullText, file.name);
+          });
+        });
+      }
+    }).catch(() => { parseEl.style.display = 'block'; parseEl.className = 'parse-result'; parseEl.textContent = 'PDF 解析失败，请手动填写到期日期。'; });
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function extractDateFromText(text, filename) {
+  const parseEl = document.getElementById('parseResultInfo');
+  const patterns = [
+    /(?:有效期至|到期日期?|合同期限.*?至|期限.*?至|截止日期?|expir\w*\s*[:：]?\s*)(\d{4})[年\-\/\.](\d{1,2})[月\-\/\.](\d{1,2})日?/i,
+    /(\d{4})[年\-\/\.](\d{1,2})[月\-\/\.](\d{1,2})日?\s*(?:到期|期满|截止)/i,
+    /(?:至|to)\s*(\d{4})[年\-\/\.](\d{1,2})[月\-\/\.](\d{1,2})/i,
+  ];
+  let found = null;
+  for (const p of patterns) { const m = text.match(p); if (m) { found = m; break; } }
+  if (found) {
+    const y = found[1].padStart(4,'0'), mo = found[2].padStart(2,'0'), d = found[3].padStart(2,'0');
+    document.getElementById('fieldContractExpiry').value = `${y}-${mo}-${d}`;
+    autoCheckExpiry();
+    parseEl.style.display = 'block'; parseEl.className = 'parse-result';
+    parseEl.style.background = '#EAF3DE'; parseEl.style.color = '#3B6D11';
+    parseEl.textContent = `✓ 已从文件中识别到到期日期：${y}年${mo}月${d}日，已自动填入。`;
+  } else {
+    parseEl.style.display = 'block'; parseEl.className = 'parse-result';
+    parseEl.textContent = '未能从文件中识别到明确的到期日期，请手动填写。';
+  }
+}
+
+// ---- 新增/编辑 ----
+function openAddModal() {
+  if (!requireAdmin()) return;
+  editingId = null;
+  window._currentContractFile = '';
+  document.getElementById('modalTitle').textContent = '新增合作商';
+  document.getElementById('fieldName').value = '';
+  document.getElementById('fieldType').value = '';
+  document.getElementById('fieldService').value = '';
+  document.getElementById('fieldCustom').value = '';
+  document.getElementById('fieldStatus').value = '洽谈中';
+  document.getElementById('fieldContract').value = '';
+  document.getElementById('fieldContractStatus').value = 'pending';
+  document.getElementById('fieldContractExpiry').value = '';
+  document.getElementById('autoExpiredBadge').style.display = 'none';
+  clearUpload();
+  setPriority(3);
+  refreshTypeSelects();
+  document.getElementById('editModal').classList.add('active');
+}
+
+function openEditModal(id) {
+  if (!requireAdmin()) return;
+  const r = records.find(x => x.id === id);
+  if (!r) return;
+  editingId = id;
+  window._currentContractFile = r.contractFile || '';
+  document.getElementById('modalTitle').textContent = '编辑合作商';
+  refreshTypeSelects();
+  document.getElementById('fieldName').value = r.name;
+  document.getElementById('fieldType').value = r.type || '';
+  document.getElementById('fieldService').value = r.service || '';
+  document.getElementById('fieldCustom').value = r.custom || '';
+  document.getElementById('fieldStatus').value = r.status;
+  document.getElementById('fieldContract').value = r.contract || '';
+  document.getElementById('fieldContractStatus').value = r.contractStatus || 'pending';
+  document.getElementById('fieldContractExpiry').value = r.contractExpiry || '';
+  document.getElementById('autoExpiredBadge').style.display = 'none';
+  clearUpload();
+  if (r.contractFile) {
+    const infoEl = document.getElementById('uploadedFileInfo');
+    infoEl.style.display = 'block';
+    infoEl.innerHTML = `<div class="uploaded-file"><span class="fname">&#128196; ${r.contractFile}</span><span class="fremove" onclick="clearUpload()">&#215;</span></div>`;
+  }
+  autoCheckExpiry();
+  setPriority(r.priority || 3);
+  document.getElementById('editModal').classList.add('active');
+}
+
+function closeModal() { document.getElementById('editModal').classList.remove('active'); }
+
+function saveRecord() {
+  if (!requireAdmin()) return;
+  const name = document.getElementById('fieldName').value.trim();
+  if (!name) { alert('请填写合作方名称'); return; }
+  const type = document.getElementById('fieldType').value;
+  if (!type) { alert('请选择业务类型'); return; }
+  const obj = {
+    name, type,
+    service: document.getElementById('fieldService').value.trim(),
+    custom: document.getElementById('fieldCustom').value.trim(),
+    status: document.getElementById('fieldStatus').value,
+    contract: document.getElementById('fieldContract').value.trim(),
+    contractStatus: document.getElementById('fieldContractStatus').value,
+    contractExpiry: document.getElementById('fieldContractExpiry').value,
+    priority: currentPriority,
+    contractFile: window._currentContractFile || '',
+  };
+  if (editingId) {
+    const idx = records.findIndex(x => x.id === editingId);
+    if (idx >= 0) records[idx] = { ...records[idx], ...obj };
+    saveData({ upsertRecordId: editingId });
+  } else {
+    const newId = Date.now();
+    records.push({ id: newId, ...obj });
+    saveData({ upsertRecordId: newId });
+  }
+  closeModal();
+  applyFilter();
+}
+
+function setPriority(val) {
+  currentPriority = val;
+  document.querySelectorAll('.priority-btn').forEach((btn, i) => {
+    btn.classList.toggle('selected', i + 1 === val);
+  });
+}
+
+// ---- 业务类型管理 ----
+function openTypeManager() {
+  if (!requireAdmin()) return;
+  renderTypeList();
+  document.getElementById('typeModal').classList.add('active');
+}
+
+function closeTypeModal() {
+  document.getElementById('typeModal').classList.remove('active');
+  refreshTypeSelects();
+  applyFilter();
+}
+
+function renderTypeList() {
+  const container = document.getElementById('typeTagList');
+  const hint = document.getElementById('typeEmptyHint');
+  if (!businessTypes.length) { container.innerHTML = ''; hint.style.display = 'block'; return; }
+  hint.style.display = 'none';
+  container.innerHTML = businessTypes.map((t, idx) => `
+    <span class="type-tag-item" id="typeTag_${idx}" ondblclick="startEditType(${idx})" title="双击修改">
+      <span class="type-label" id="typeLabel_${idx}">${t}</span>
+      <span class="del-btn" onclick="removeType('${t}')" title="删除">&#215;</span>
+    </span>
+  `).join('');
+}
+
+function startEditType(idx) {
+  const labelEl = document.getElementById(`typeLabel_${idx}`);
+  if (!labelEl) return;
+  const oldName = businessTypes[idx];
+  labelEl.innerHTML = `<input class="type-edit-input" id="typeEditInput_${idx}" value="${oldName}" onblur="finishEditType(${idx})" onkeydown="if(event.key==='Enter')finishEditType(${idx});if(event.key==='Escape')cancelEditType(${idx})">`;
+  const inp = document.getElementById(`typeEditInput_${idx}`);
+  inp.focus(); inp.select();
+}
+
+function finishEditType(idx) {
+  const inp = document.getElementById(`typeEditInput_${idx}`);
+  if (!inp) return;
+  const newName = inp.value.trim();
+  const oldName = businessTypes[idx];
+  if (!newName || newName === oldName) { renderTypeList(); return; }
+  if (businessTypes.includes(newName)) { alert('该类型名称已存在'); renderTypeList(); return; }
+  businessTypes[idx] = newName;
+  let syncCount = 0;
+  records.forEach(r => { if (r.type === oldName) { r.type = newName; syncCount++; } });
+  saveData();
+  renderTypeList();
+  showToast(syncCount > 0 ? `类型已更名，同步更新 ${syncCount} 条记录` : `类型已更名`);
+}
+
+function cancelEditType(idx) { renderTypeList(); }
+
+function addType() {
+  if (!requireAdmin()) return;
+  const input = document.getElementById('newTypeInput');
+  const val = input.value.trim();
+  if (!val) return;
+  if (businessTypes.includes(val)) { alert('该类型已存在'); return; }
+  businessTypes.push(val);
+  saveData();
+  input.value = '';
+  renderTypeList();
+  showToast(`已新增业务类型「${val}」`);
+}
+
+function removeType(t) {
+  if (!requireAdmin()) return;
+  if (!confirm(`确认删除业务类型「${t}」？`)) return;
+  businessTypes = businessTypes.filter(x => x !== t);
+  saveData({ typeDeletedName: t });
+  renderTypeList();
+  showToast(`已删除业务类型「${t}」`);
+}
+
+function openConfirm(id) {
+  if (!requireAdmin()) return;
+  deletingId = id;
+  document.getElementById('confirmModal').classList.add('active');
+}
+
+function closeConfirm() {
+  document.getElementById('confirmModal').classList.remove('active');
+  deletingId = null;
+}
+
+function confirmDelete() {
+  if (!requireAdmin()) return;
+  if (!deletingId) return;
+  const idToDelete = deletingId;
+  records = records.filter(r => r.id !== idToDelete);
+  saveData({ deletedRecordId: idToDelete });
+  closeConfirm();
+  applyFilter();
+}
+
+// 拖拽上传
+const uploadArea = document.getElementById('uploadArea');
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', e => {
+  e.preventDefault(); uploadArea.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) { document.getElementById('contractFileInput').files = e.dataTransfer.files; handleFileUpload({target: {files: [file]}}); }
+});
+
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('active'); });
+});
+
+// ========== 初始化 ==========
+async function initApp() {
+  await loadFromSupabase();
+  checkUserRole();
+  updateUI();
+  autoEvalContractStatus();
+  refreshTypeSelects();
+  applyFilter();
+  renderAdminPanel();
+  initRealtimeSubscription();
+}
+
+// 启动：检查是否已登录
+(function boot() {
+  const saved = localStorage.getItem('pm_currentUser');
+  if (saved) {
+    try {
+      currentUser = JSON.parse(saved);
+      enterApp();
+    } catch (e) {
+      localStorage.removeItem('pm_currentUser');
+    }
+  }
+})();
+</script>
+</body>
+</html>
