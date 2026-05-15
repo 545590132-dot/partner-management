@@ -35,7 +35,7 @@
   .col-no { width: 46px; }
   .col-type { width: 96px; }
   .col-name { width: 126px; }
-  .col-service { width: 110px; }
+  .col-service { width: 180px; }
   .col-custom { width: 150px; }
   .col-status { width: 84px; }
   .col-contract { width: 140px; }
@@ -65,7 +65,7 @@
   .form-row input:focus, .form-row select:focus, .form-row textarea:focus { outline: none; border-color: #185FA5; }
   .form-row textarea { resize: vertical; min-height: 100px; line-height: 1.6; }
   .form-row .hint { font-size: 11px; color: #888780; margin-top: 4px; }
-  .cell-multiline { white-space: pre-wrap; word-break: break-word; line-height: 1.5; max-height: 72px; overflow-y: auto; }
+  .cell-multiline { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
   .form-row .type-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .form-row .type-tag-item { display: inline-flex; align-items: center; gap: 4px; background: #E6F1FB; color: #185FA5; border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
   .form-row .type-tag-item .del-btn { cursor: pointer; font-size: 14px; line-height: 1; color: #185FA5; }
@@ -387,6 +387,7 @@ let deletingId = null;
 let currentPriority = 3;
 let filteredRecords = [];
 let _syncingFromRemote = false;
+let _lastSyncTime = 0; // 记录最后一次自己发起的同步时间
 
 // 当前登录用户
 let currentUser = null;   // {wechat_id, nickname, role: 'admin'|'guest'}
@@ -478,11 +479,63 @@ async function refreshOnlineUsers() {
     const { data: onlineData } = await sb.from('partner_online').select('*').order('last_seen', { ascending: false });
     if (onlineData) {
       onlineUsers = onlineData;
+      // 同时刷新管理员列表，确保角色判断准确
+      const { data: adminsData } = await sb.from('partner_admins').select('*');
+      if (adminsData) {
+        admins = adminsData.map(a => ({ wechat_id: a.wechat_id, nickname: a.nickname || a.wechat_id }));
+        // 确保超级管理员在列表中
+        if (!admins.some(a => a.wechat_id === SUPER_ADMIN_WECHAT)) {
+          admins.push({ wechat_id: SUPER_ADMIN_WECHAT, nickname: SUPER_ADMIN_WECHAT });
+        }
+      }
+      checkUserRole();
       renderAdminPanel();
     }
   } catch (e) { console.warn('刷新在线用户失败:', e); }
 }
-setInterval(refreshOnlineUsers, 15000);
+setInterval(refreshOnlineUsers, 10000);
+
+// 定时全量数据同步（确保多管理员之间数据一致性）
+async function fullDataSync() {
+  try {
+    // 同步记录
+    const { data: recordsData } = await sb.from('partner_records').select('*').order('id');
+    if (recordsData) {
+      const remoteRecords = recordsData.map(rowToRecord);
+      // 只在数据有变化时更新，避免不必要的 UI 刷新
+      const remoteIds = new Set(remoteRecords.map(r => r.id));
+      const localIds = new Set(records.map(r => r.id));
+      let changed = remoteIds.size !== localIds.size || [...remoteIds].some(id => !localIds.has(id));
+      if (!changed) {
+        for (const rr of remoteRecords) {
+          const lr = records.find(r => r.id === rr.id);
+          if (!lr || JSON.stringify(lr) !== JSON.stringify(rr)) { changed = true; break; }
+        }
+      }
+      if (changed) {
+        records = remoteRecords;
+        localStorage.setItem('partnerRecords', JSON.stringify(records));
+        refreshTypeSelects();
+        applyFilter();
+        console.log('[sync] 记录已从远端同步更新');
+      }
+    }
+
+    // 同步业务类型
+    const { data: typesData } = await sb.from('partner_types').select('*').order('id');
+    if (typesData && typesData.length > 0) {
+      const remoteTypes = typesData.map(t => t.name);
+      if (JSON.stringify(remoteTypes) !== JSON.stringify(businessTypes)) {
+        businessTypes = remoteTypes;
+        localStorage.setItem('partnerTypes', JSON.stringify(businessTypes));
+        refreshTypeSelects();
+        applyFilter();
+        console.log('[sync] 业务类型已从远端同步更新');
+      }
+    }
+  } catch (e) { console.warn('全量数据同步失败:', e); }
+}
+setInterval(fullDataSync, 8000);
 
 // ========== 数据同步：Supabase <--> 本地 ==========
 
@@ -509,6 +562,7 @@ async function saveData(opts = {}) {
   localStorage.setItem('partnerTypes', JSON.stringify(businessTypes));
   try {
     _syncingFromRemote = true;
+    _lastSyncTime = Date.now();
 
     if (opts.deletedRecordId != null) {
       const { error } = await sb.from('partner_records').delete().eq('id', opts.deletedRecordId);
@@ -618,11 +672,12 @@ function initRealtimeSubscription() {
   }
   _realtimeChannel = sb.channel('partner-all-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_records' }, payload => {
-      if (_syncingFromRemote) return;
+      // 只忽略自己刚发起的变更（3秒内），不阻塞其他管理员的变更
+      if (_syncingFromRemote && Date.now() - _lastSyncTime < 3000) return;
       handleRecordChange(payload);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_types' }, payload => {
-      if (_syncingFromRemote) return;
+      if (_syncingFromRemote && Date.now() - _lastSyncTime < 3000) return;
       handleTypeChange(payload);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_admins' }, payload => {
@@ -649,7 +704,8 @@ function handleRecordChange(payload) {
   localStorage.setItem('partnerRecords', JSON.stringify(records));
   refreshTypeSelects();
   applyFilter();
-  showToast('数据已同步更新');
+  const actionMap = { INSERT: '新增', UPDATE: '编辑', DELETE: '删除' };
+  showToast(`其他管理员${actionMap[eventType] || '更新'}了数据，已同步`);
 }
 
 async function handleTypeChange(payload) {
@@ -704,6 +760,7 @@ async function promoteToAdmin(wechatId, nickname) {
   if (!requireAdmin()) return;
   try {
     _syncingFromRemote = true;
+    _lastSyncTime = Date.now();
     const { error } = await sb.from('partner_admins').upsert({ wechat_id: wechatId, nickname: nickname || wechatId }, { onConflict: 'wechat_id' });
     if (error) { showToast('设置管理员失败: ' + error.message); return; }
     if (!admins.some(a => a.wechat_id === wechatId)) {
@@ -725,6 +782,7 @@ async function removeAdmin(wechatId) {
   if (wechatId === currentUser.wechat_id) { showToast('无法移除自己'); return; }
   try {
     _syncingFromRemote = true;
+    _lastSyncTime = Date.now();
     const { error } = await sb.from('partner_admins').delete().eq('wechat_id', wechatId);
     if (error) { showToast('移除管理员失败: ' + error.message); return; }
     admins = admins.filter(a => a.wechat_id !== wechatId);
@@ -1251,10 +1309,10 @@ async function initApp() {
   applyFilter();
   renderAdminPanel();
   initRealtimeSubscription();
-  // 首次加载后立即刷新一次在线用户
-  if (currentUser && currentUser.role === 'admin') {
-    setTimeout(refreshOnlineUsers, 2000);
-  }
+  // 首次加载后立即刷新在线用户和管理员列表
+  refreshOnlineUsers();
+  // 3秒后做一次全量数据同步，确保与其他管理员数据一致
+  setTimeout(fullDataSync, 3000);
 }
 
 // 启动：检查是否已登录
