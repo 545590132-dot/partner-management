@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>代理服务商管理</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>代理服务商管理 v2.1</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 13px; color: #2C2C2A; background: #F7F6F2; min-height: 100vh; }
@@ -628,7 +631,9 @@ async function fullDataSync() {
     const { data: recordsData, error: recErr } = await sb.from('partner_records').select('*').order('id');
     if (recErr) { console.warn('[sync] 查询远端记录失败:', recErr.message); return; }
     if (recordsData && recordsData.length > 0) {
-      const remoteRecords = recordsData.map(rowToRecord);
+      // 过滤掉脏数据（__online__/__test__ 前缀不应出现在 partner_records）
+      const cleanRecordsData = recordsData.filter(r => r.name && !r.name.startsWith('__online__') && !r.name.startsWith('__test__'));
+      const remoteRecords = cleanRecordsData.map(rowToRecord);
       let changed = false;
 
       // 以远端为基准（远端是source of truth）
@@ -783,14 +788,12 @@ async function saveData(opts = {}) {
         const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
         if (error) { console.error('❌ 同步记录失败:', error.message); showToast('同步失败: ' + error.message); return; }
       }
-      setTimeout(() => _recentLocalChanges.delete('up_' + opts.upsertRecordId), 5000);
+      setTimeout(() => _recentLocalChanges.delete('up_' + opts.upsertRecordId), 30000);
     } else {
-      // 全量同步（首次或回写）
-      for (const rec of records) {
-        const row = recordToRow(rec);
-        const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
-        if (error) console.warn('同步记录失败:', error.message);
-      }
+      // 无参调用（如 addType/finishEditType）— 只同步类型，不同步 records
+      // 避免把本地缓存的已删除记录推回远端
+      // records 的同步由 fullDataSync() 负责，这里不再全量推送
+      console.log('[saveData] 无参调用，跳过 records 全量推送（由 fullDataSync 负责）');
     }
 
     if (opts.typeDeletedName) {
@@ -828,16 +831,16 @@ async function loadFromSupabase() {
     // 加载记录
     const { data: recordsData, error: e1 } = await sb.from('partner_records').select('*').order('id');
     if (!e1 && recordsData && recordsData.length > 0) {
-      records = recordsData.map(rowToRecord);
+      // 过滤掉脏数据（__online__/__test__ 前缀不应出现在 partner_records）
+      records = recordsData.filter(r => r.name && !r.name.startsWith('__online__') && !r.name.startsWith('__test__')).map(rowToRecord);
     } else if (e1) {
       console.warn('加载 records 失败:', e1.message);
       records = JSON.parse(localStorage.getItem('partnerRecords') || '[]');
     } else {
-      // 远端为空，尝试使用本地缓存
-      const localRecords = JSON.parse(localStorage.getItem('partnerRecords') || '[]');
-      if (localRecords.length > 0) {
-        records = localRecords;
-      }
+      // 远端为空 → 不从 localStorage 加载旧数据
+      // 旧数据可能是已删除的记录，加载后会被 fullDataSync 误推回远端
+      console.log('[loadFromSupabase] 远端记录为空，不加载本地缓存');
+      records = [];
     }
 
     // 加载所有 partner_types 数据（包含业务类型、管理员、在线用户）
@@ -932,13 +935,29 @@ function handleRecordChange(payload) {
   const { eventType, new: newRow, old: oldRow } = payload;
   if (eventType === 'INSERT') {
     const rec = rowToRecord(newRow);
+    // 防止脏数据（__online__/__test__ 前缀不应出现在 partner_records）
+    if (rec.name && (rec.name.startsWith('__online__') || rec.name.startsWith('__test__'))) {
+      console.warn('[realtime] 忽略脏数据 INSERT:', rec.name);
+      return;
+    }
     if (!records.find(r => r.id === rec.id)) records.push(rec);
   } else if (eventType === 'UPDATE') {
     const rec = rowToRecord(newRow);
     const idx = records.findIndex(r => r.id === rec.id);
     if (idx >= 0) records[idx] = rec; else records.push(rec);
   } else if (eventType === 'DELETE') {
-    records = records.filter(r => r.id !== oldRow.id);
+    const deletedId = oldRow?.id;
+    if (deletedId != null) {
+      records = records.filter(r => r.id !== deletedId);
+      // 立即更新 localStorage，防止旧数据被推回
+      localStorage.setItem('partnerRecords', JSON.stringify(records));
+      console.log('[realtime] 收到删除事件，已从本地移除 id=' + deletedId);
+    } else {
+      // oldRow 没有 id，需要重新加载远端数据
+      console.warn('[realtime] DELETE 事件缺少 id，将重新加载远端数据');
+      fullDataSync();
+      return;
+    }
   }
   localStorage.setItem('partnerRecords', JSON.stringify(records));
   refreshTypeSelects();
