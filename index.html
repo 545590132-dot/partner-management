@@ -472,6 +472,18 @@ async function cleanOfflineUsers() {
 }
 setInterval(cleanOfflineUsers, 60000);
 
+// 定时刷新在线用户列表（补充 Realtime 可能丢失的更新）
+async function refreshOnlineUsers() {
+  try {
+    const { data: onlineData } = await sb.from('partner_online').select('*').order('last_seen', { ascending: false });
+    if (onlineData) {
+      onlineUsers = onlineData;
+      renderAdminPanel();
+    }
+  } catch (e) { console.warn('刷新在线用户失败:', e); }
+}
+setInterval(refreshOnlineUsers, 15000);
+
 // ========== 数据同步：Supabase <--> 本地 ==========
 
 function recordToRow(r) {
@@ -1239,6 +1251,10 @@ async function initApp() {
   applyFilter();
   renderAdminPanel();
   initRealtimeSubscription();
+  // 首次加载后立即刷新一次在线用户
+  if (currentUser && currentUser.role === 'admin') {
+    setTimeout(refreshOnlineUsers, 2000);
+  }
 }
 
 // 启动：检查是否已登录
