@@ -631,24 +631,37 @@ async function fullDataSync() {
       const remoteRecords = recordsData.map(rowToRecord);
       let changed = false;
 
-      // 以远端为基准，合并本地新增（远端没有的）
+      // 以远端为基准（远端是source of truth）
       const remoteMap = new Map(remoteRecords.map(r => [r.id, r]));
       const localMap = new Map(records.map(r => [r.id, r]));
       
-      // 找出本地有但远端没有的 → 推送到远端
+      // 本地有但远端没有的记录 → 不推送！远端没有说明已被其他客户端删除
+      // 除非是刚刚在本地新增且还没来得及同步的（_recentLocalChanges 中有 up_ 标记）
       for (const [id, lr] of localMap) {
-        if (!remoteMap.has(id) && !_recentLocalChanges.has('del_' + id)) {
-          console.log('[sync] 本地记录未在远端，推送中:', id);
-          const row = recordToRow(lr);
-          const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
-          if (error) console.error('[sync] 推送失败:', error.message);
-          else { remoteMap.set(id, lr); changed = true; }
+        if (!remoteMap.has(id)) {
+          if (_recentLocalChanges.has('up_' + id)) {
+            // 刚刚本地新增/编辑的，确实需要推送
+            console.log('[sync] 本地新增/编辑记录未在远端，推送中:', id);
+            const row = recordToRow(lr);
+            const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
+            if (error) console.error('[sync] 推送失败:', error.message);
+            else { remoteMap.set(id, lr); changed = true; }
+          } else {
+            // 远端没有且不是本地新增 → 说明已被其他客户端删除，从本地也移除
+            console.log('[sync] 本地记录不在远端且非新增，视为已被删除:', id);
+          }
         }
       }
 
       // 如果远端数据与本地不同，以远端为准更新本地
-      if (JSON.stringify(remoteRecords.map(r => r.id).sort()) !== JSON.stringify(records.map(r => r.id).sort()) ||
-          remoteRecords.some(rr => { const lr = localMap.get(rr.id); return !lr || JSON.stringify(lr) !== JSON.stringify(rr); })) {
+      const localIds = records.map(r => r.id).sort();
+      const remoteIds = remoteRecords.map(r => r.id).sort();
+      const idsDiffer = JSON.stringify(remoteIds) !== JSON.stringify(localIds);
+      const contentDiffers = remoteRecords.some(rr => {
+        const lr = localMap.get(rr.id);
+        return !lr || JSON.stringify(lr) !== JSON.stringify(rr);
+      });
+      if (idsDiffer || contentDiffers) {
         records = remoteRecords;
         records.sort((a, b) => (b.priority || 1) - (a.priority || 1));
         localStorage.setItem('partnerRecords', JSON.stringify(records));
@@ -658,13 +671,26 @@ async function fullDataSync() {
         console.log('[sync] 记录已从远端同步更新');
       }
     } else if (records.length > 0) {
-      // 远端为空但本地有数据 → 推送本地到远端
+      // 远端为空但本地有数据 → 只有标记为本地新增的才推送，其余视为远端已清除
+      let pushedAny = false;
       for (const rec of records) {
-        const row = recordToRow(rec);
-        const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
-        if (error) console.error('[sync] 推送本地记录失败:', error.message);
+        if (_recentLocalChanges.has('up_' + rec.id)) {
+          const row = recordToRow(rec);
+          const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
+          if (error) console.error('[sync] 推送本地记录失败:', error.message);
+          else pushedAny = true;
+        }
       }
-      console.log('[sync] 已将本地记录推送到远端');
+      if (pushedAny) {
+        console.log('[sync] 已将本地新增记录推送到远端');
+      } else {
+        // 本地所有记录都不是新增 → 远端确实为空，清空本地
+        console.log('[sync] 远端记录为空且无本地新增，清空本地缓存');
+        records = [];
+        localStorage.setItem('partnerRecords', JSON.stringify(records));
+        refreshTypeSelects();
+        applyFilter();
+      }
     }
 
     // 同步 partner_types（包含业务类型、管理员、在线用户）
@@ -747,7 +773,8 @@ async function saveData(opts = {}) {
       _recentLocalChanges.add('del_' + opts.deletedRecordId);
       const { error } = await sb.from('partner_records').delete().eq('id', opts.deletedRecordId);
       if (error) { console.error('❌ 删除记录失败:', error.message); showToast('同步失败: ' + error.message); return; }
-      setTimeout(() => _recentLocalChanges.delete('del_' + opts.deletedRecordId), 5000);
+      // 30秒后才清除删除标记，确保多个 fullDataSync 周期内不会误推已删除的记录
+      setTimeout(() => _recentLocalChanges.delete('del_' + opts.deletedRecordId), 30000);
     } else if (opts.upsertRecordId != null) {
       _recentLocalChanges.add('up_' + opts.upsertRecordId);
       const rec = records.find(r => r.id === opts.upsertRecordId);
@@ -855,19 +882,8 @@ async function loadFromSupabase() {
       await sb.from('partner_types').upsert({ id: adminId(SUPER_ADMIN_WECHAT), name: encoded }, { onConflict: 'id' });
     }
 
-    // Supabase 为空时回写本地缓存
-    if (records.length === 0 && localStorage.getItem('partnerRecords')) {
-      const localRecords = JSON.parse(localStorage.getItem('partnerRecords') || '[]');
-      if (localRecords.length > 0) {
-        records = localRecords;
-        showToast('正在同步本地数据到云端...');
-        for (const rec of records) {
-          const row = recordToRow(rec);
-          const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
-          if (error) console.error('回写记录失败:', error.message, row);
-        }
-      }
-    }
+    // 远端为空时不自动回写本地缓存（防止已删除数据被推回）
+    // 如果确实需要初始化数据，应由管理员手动操作
     if (businessTypes.length > 0) {
       // 确保业务类型在 partner_types 中
       for (let i = 0; i < businessTypes.length; i++) {
@@ -1566,6 +1582,8 @@ function confirmDelete() {
   if (!deletingId) return;
   const idToDelete = deletingId;
   records = records.filter(r => r.id !== idToDelete);
+  // 立即同步清理 localStorage 缓存，防止 fullDataSync 把旧数据推回远端
+  localStorage.setItem('partnerRecords', JSON.stringify(records));
   saveData({ deletedRecordId: idToDelete }).then(() => {
     showToast('删除成功');
   });
