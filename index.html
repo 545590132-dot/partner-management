@@ -394,6 +394,40 @@ let currentUser = null;   // {wechat_id, nickname, role: 'admin'|'guest'}
 // 默认超级管理员微信号
 const SUPER_ADMIN_WECHAT = 'xijiekongjian';
 
+// ========== partner_types 编码方案 ==========
+// id 1-100: 业务类型 (name = 类型名)
+// id 1001+: 管理员 (name = '__admin__:wechat_id:nickname')
+// id 2001+: 在线用户 (name = '__online__:wechat_id:nickname:timestamp')
+function encodeAdmin(wechat_id, nickname) { return `__admin__:${wechat_id}:${nickname || wechat_id}`; }
+function encodeOnline(wechat_id, nickname, last_seen) { return `__online__:${wechat_id}:${nickname || wechat_id}:${last_seen}`; }
+function decodeAdmin(name) {
+  if (!name || !name.startsWith('__admin__:')) return null;
+  const parts = name.substring('__admin__:'.length).split(':');
+  return { wechat_id: parts[0], nickname: parts.slice(1).join(':') || parts[0] };
+}
+function decodeOnline(name) {
+  if (!name || !name.startsWith('__online__:')) return null;
+  const parts = name.substring('__online__:'.length).split(':');
+  return { wechat_id: parts[0], nickname: parts[1] || parts[0], last_seen: parts.slice(2).join(':') || '' };
+}
+function adminId(wechat_id) { return 1001 + Math.abs(hashCode(wechat_id)) % 900; }
+function onlineId(wechat_id) { return 2001 + Math.abs(hashCode(wechat_id)) % 900; }
+function hashCode(s) { let h = 0; for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; } return h; }
+
+function parseTypesRows(rows) {
+  const types = [], adminRows = [], onlineRows = [];
+  for (const row of rows) {
+    if (row.name.startsWith('__admin__:')) {
+      adminRows.push({ ...decodeAdmin(row.name), _id: row.id });
+    } else if (row.name.startsWith('__online__:')) {
+      onlineRows.push({ ...decodeOnline(row.name), _id: row.id });
+    } else {
+      types.push(row.name);
+    }
+  }
+  return { types, adminRows, onlineRows };
+}
+
 // ========== 登录系统 ==========
 function doLogin() {
   const nickname = document.getElementById('loginNickname').value.trim();
@@ -424,7 +458,7 @@ function enterApp() {
 function doLogout() {
   // 清除在线状态
   if (currentUser) {
-    sb.from('partner_online').delete().eq('wechat_id', currentUser.wechat_id).then(() => {});
+    sb.from('partner_types').delete().eq('id', onlineId(currentUser.wechat_id)).then(() => {});
   }
   localStorage.removeItem('pm_currentUser');
   currentUser = null;
@@ -446,17 +480,17 @@ function requireAdmin(action) {
   return true;
 }
 
-// 注册在线心跳
+// 注册在线心跳（使用 partner_types 表存储）
 async function registerOnline() {
   if (!currentUser) return;
   try {
-    const { error } = await sb.from('partner_online').upsert({
-      wechat_id: currentUser.wechat_id,
-      nickname: currentUser.nickname,
-      last_seen: new Date().toISOString()
-    }, { onConflict: 'wechat_id' });
+    const encoded = encodeOnline(currentUser.wechat_id, currentUser.nickname, new Date().toISOString());
+    const { error } = await sb.from('partner_types').upsert({
+      id: onlineId(currentUser.wechat_id),
+      name: encoded
+    }, { onConflict: 'id' });
     if (error) {
-      console.error('❌ 注册在线状态失败:', error.message, error.details, error.hint);
+      console.error('❌ 注册在线状态失败:', error.message);
     } else {
       console.log('[online] 心跳成功:', currentUser.wechat_id);
     }
@@ -471,33 +505,42 @@ setInterval(() => {
 // 清理离线用户（超过2分钟未心跳）
 async function cleanOfflineUsers() {
   try {
-    const twoMinAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-    await sb.from('partner_online').delete().lt('last_seen', twoMinAgo);
+    const { data: allRows } = await sb.from('partner_types').select('id,name').gte('id', 2001);
+    if (!allRows) return;
+    const twoMinAgo = Date.now() - 2 * 60 * 1000;
+    for (const row of allRows) {
+      const online = decodeOnline(row.name);
+      if (online && online.last_seen) {
+        const lastSeen = new Date(online.last_seen).getTime();
+        if (lastSeen < twoMinAgo) {
+          await sb.from('partner_types').delete().eq('id', row.id);
+        }
+      }
+    }
   } catch (e) { console.warn('清理离线用户失败:', e); }
 }
 setInterval(cleanOfflineUsers, 60000);
 
-// 定时刷新在线用户列表（补充 Realtime 可能丢失的更新）
+// 定时刷新在线用户列表和管理员列表（使用 partner_types 表）
 async function refreshOnlineUsers() {
   try {
-    const { data: onlineData, error: onlineErr } = await sb.from('partner_online').select('*').order('last_seen', { ascending: false });
-    if (onlineErr) { console.error('❌ 查询在线用户失败:', onlineErr.message); return; }
-    if (onlineData) {
-      onlineUsers = onlineData;
-      console.log('[online] 当前在线用户:', onlineData.map(u => u.nickname || u.wechat_id).join(', ') || '无');
-      // 同时刷新管理员列表，确保角色判断准确
-      const { data: adminsData, error: adminsErr } = await sb.from('partner_admins').select('*');
-      if (adminsErr) { console.error('❌ 查询管理员失败:', adminsErr.message); return; }
-      if (adminsData) {
-        admins = adminsData.map(a => ({ wechat_id: a.wechat_id, nickname: a.nickname || a.wechat_id }));
-        // 确保超级管理员在列表中
-        if (!admins.some(a => a.wechat_id === SUPER_ADMIN_WECHAT)) {
-          admins.push({ wechat_id: SUPER_ADMIN_WECHAT, nickname: SUPER_ADMIN_WECHAT });
-        }
-      }
-      checkUserRole();
-      renderAdminPanel();
+    const { data: allRows, error } = await sb.from('partner_types').select('*').order('id');
+    if (error) { console.error('❌ 查询 partner_types 失败:', error.message); return; }
+    if (!allRows) return;
+    const parsed = parseTypesRows(allRows);
+    
+    // 更新在线用户
+    onlineUsers = parsed.onlineRows;
+    console.log('[online] 当前在线用户:', onlineUsers.map(u => u.nickname || u.wechat_id).join(', ') || '无');
+    
+    // 更新管理员列表
+    admins = parsed.adminRows;
+    if (!admins.some(a => a.wechat_id === SUPER_ADMIN_WECHAT)) {
+      admins.push({ wechat_id: SUPER_ADMIN_WECHAT, nickname: SUPER_ADMIN_WECHAT });
     }
+    
+    checkUserRole();
+    renderAdminPanel();
   } catch (e) { console.error('❌ 刷新在线用户失败:', e); }
 }
 setInterval(refreshOnlineUsers, 10000);
@@ -515,24 +558,19 @@ async function fullDataSync() {
       const localMap = new Map(records.map(r => [r.id, r]));
       let changed = false;
 
-      // 合并策略：远端有但本地没有 → 添加；远端和本地都有 → 以较新的为准
-      // 本地有但远端没有 → 本地刚新建可能还没同步，保留本地并尝试推送
       const merged = new Map();
 
       // 加入所有远端记录
       for (const [id, rr] of remoteMap) {
         if (localMap.has(id)) {
-          // 两边都有，比较内容
           const lr = localMap.get(id);
           if (JSON.stringify(lr) !== JSON.stringify(rr)) {
-            // 内容不同，以远端为准（其他管理员可能编辑过）
             merged.set(id, rr);
             changed = true;
           } else {
             merged.set(id, lr);
           }
         } else {
-          // 远端有本地没有，添加
           merged.set(id, rr);
           changed = true;
         }
@@ -542,7 +580,6 @@ async function fullDataSync() {
       for (const [id, lr] of localMap) {
         if (!remoteMap.has(id)) {
           merged.set(id, lr);
-          // 尝试推送到远端
           console.log('[sync] 本地记录未在远端，推送中:', id);
           const row = recordToRow(lr);
           const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
@@ -560,17 +597,40 @@ async function fullDataSync() {
       }
     }
 
-    // 同步业务类型
+    // 同步 partner_types（包含业务类型、管理员、在线用户）
     const { data: typesData, error: typeErr } = await sb.from('partner_types').select('*').order('id');
     if (typeErr) { console.warn('[sync] 查询远端类型失败:', typeErr.message); return; }
-    if (typesData && typesData.length > 0) {
-      const remoteTypes = typesData.map(t => t.name);
-      if (JSON.stringify(remoteTypes) !== JSON.stringify(businessTypes)) {
-        businessTypes = remoteTypes;
+    if (typesData) {
+      const parsed = parseTypesRows(typesData);
+      let typeChanged = false;
+
+      // 同步业务类型
+      if (JSON.stringify(parsed.types) !== JSON.stringify(businessTypes) && parsed.types.length > 0) {
+        businessTypes = parsed.types;
         localStorage.setItem('partnerTypes', JSON.stringify(businessTypes));
         refreshTypeSelects();
         applyFilter();
-        console.log('[sync] 业务类型已从远端同步更新');
+        typeChanged = true;
+      }
+
+      // 同步管理员列表
+      const remoteAdmins = parsed.adminRows;
+      if (!admins.some(a => a.wechat_id === SUPER_ADMIN_WECHAT)) {
+        remoteAdmins.push({ wechat_id: SUPER_ADMIN_WECHAT, nickname: SUPER_ADMIN_WECHAT });
+      }
+      if (JSON.stringify(remoteAdmins.map(a => a.wechat_id).sort()) !== JSON.stringify(admins.map(a => a.wechat_id).sort())) {
+        admins = remoteAdmins;
+        checkUserRole();
+        updateUI();
+        typeChanged = true;
+      }
+
+      // 同步在线用户
+      onlineUsers = parsed.onlineRows;
+      renderAdminPanel();
+
+      if (typeChanged) {
+        console.log('[sync] partner_types 数据已从远端同步更新');
       }
     }
   } catch (e) { console.warn('全量数据同步失败:', e); }
@@ -626,19 +686,27 @@ async function saveData(opts = {}) {
     }
 
     if (opts.typeDeletedName) {
-      const { error } = await sb.from('partner_types').delete().eq('name', opts.typeDeletedName);
-      if (error) console.warn('删除类型同步失败:', error.message);
+      // 查找该类型名的 id 并删除
+      const { data: typeRows } = await sb.from('partner_types').select('id,name').lt('id', 1001);
+      if (typeRows) {
+        const target = typeRows.find(t => t.name === opts.typeDeletedName);
+        if (target) {
+          await sb.from('partner_types').delete().eq('id', target.id);
+        }
+      }
     }
+    // 同步业务类型（只处理 id < 1001 的行，不影响管理员和在线用户）
+    const { data: currentTypeRows } = await sb.from('partner_types').select('id,name').lt('id', 1001).order('id');
+    const existingTypeIds = (currentTypeRows || []).map(t => t.id);
     for (let i = 0; i < businessTypes.length; i++) {
       const typeRow = { id: i + 1, name: businessTypes[i] };
       const { error } = await sb.from('partner_types').upsert(typeRow, { onConflict: 'id' });
       if (error) console.warn('同步类型失败:', error.message);
     }
-    const { data: existingTypes } = await sb.from('partner_types').select('id').order('id');
-    if (existingTypes && existingTypes.length > businessTypes.length) {
-      const idsToDelete = existingTypes.slice(businessTypes.length).map(t => t.id);
-      for (const did of idsToDelete) {
-        await sb.from('partner_types').delete().eq('id', did);
+    // 删除多余的业务类型行（不删管理员和在线用户行）
+    if (existingTypeIds.length > businessTypes.length) {
+      for (let i = businessTypes.length + 1; i <= Math.max(...existingTypeIds); i++) {
+        await sb.from('partner_types').delete().eq('id', i);
       }
     }
   } catch (err) {
@@ -649,6 +717,7 @@ async function saveData(opts = {}) {
 
 async function loadFromSupabase() {
   try {
+    // 加载记录
     const { data: recordsData, error: e1 } = await sb.from('partner_records').select('*').order('id');
     if (!e1 && recordsData) {
       records = recordsData.map(rowToRecord);
@@ -657,29 +726,29 @@ async function loadFromSupabase() {
       records = JSON.parse(localStorage.getItem('partnerRecords') || '[]');
     }
 
+    // 加载所有 partner_types 数据（包含业务类型、管理员、在线用户）
     const { data: typesData, error: e2 } = await sb.from('partner_types').select('*').order('id');
     if (!e2 && typesData && typesData.length > 0) {
-      businessTypes = typesData.map(t => t.name);
+      const parsed = parseTypesRows(typesData);
+      businessTypes = parsed.types.length > 0 ? parsed.types : 
+        (JSON.parse(localStorage.getItem('partnerTypes') || '[]').length > 0 ? 
+          JSON.parse(localStorage.getItem('partnerTypes') || '[]') : 
+          ['技术服务','营销推广','供应链','物流配送','金融服务','内容创作']);
+      admins = parsed.adminRows;
+      onlineUsers = parsed.onlineRows;
     } else if (e2 || !typesData || typesData.length === 0) {
       if (e2) console.warn('加载 types 失败:', e2.message);
       const localTypes = JSON.parse(localStorage.getItem('partnerTypes') || '[]');
       businessTypes = localTypes.length > 0 ? localTypes : ['技术服务','营销推广','供应链','物流配送','金融服务','内容创作'];
     }
 
-    // 加载管理员列表
-    const { data: adminsData, error: e3 } = await sb.from('partner_admins').select('*');
-    if (!e3 && adminsData) {
-      admins = adminsData.map(a => ({ wechat_id: a.wechat_id, nickname: a.nickname || a.wechat_id }));
-    }
     // 确保超级管理员在列表中
     if (!admins.some(a => a.wechat_id === SUPER_ADMIN_WECHAT)) {
       admins.push({ wechat_id: SUPER_ADMIN_WECHAT, nickname: SUPER_ADMIN_WECHAT });
-      await sb.from('partner_admins').upsert({ wechat_id: SUPER_ADMIN_WECHAT, nickname: SUPER_ADMIN_WECHAT }, { onConflict: 'wechat_id' });
+      // 同步到 Supabase
+      const encoded = encodeAdmin(SUPER_ADMIN_WECHAT, SUPER_ADMIN_WECHAT);
+      await sb.from('partner_types').upsert({ id: adminId(SUPER_ADMIN_WECHAT), name: encoded }, { onConflict: 'id' });
     }
-
-    // 加载在线用户
-    const { data: onlineData } = await sb.from('partner_online').select('*').order('last_seen', { ascending: false });
-    onlineUsers = onlineData || [];
 
     // Supabase 为空时回写本地缓存
     if (records.length === 0 && localStorage.getItem('partnerRecords')) {
@@ -687,7 +756,6 @@ async function loadFromSupabase() {
       if (localRecords.length > 0) {
         records = localRecords;
         showToast('正在同步本地数据到云端...');
-        // 逐条 upsert 确保可靠
         for (const rec of records) {
           const row = recordToRow(rec);
           const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
@@ -695,13 +763,10 @@ async function loadFromSupabase() {
         }
       }
     }
-    if (businessTypes.length === 0) {
-      const localTypes = JSON.parse(localStorage.getItem('partnerTypes') || '[]');
-      businessTypes = localTypes.length > 0 ? localTypes : ['技术服务','营销推广','供应链','物流配送','金融服务','内容创作'];
-      if (businessTypes.length > 0) {
-        for (let i = 0; i < businessTypes.length; i++) {
-          await sb.from('partner_types').upsert({ id: i + 1, name: businessTypes[i] }, { onConflict: 'id' });
-        }
+    if (businessTypes.length > 0) {
+      // 确保业务类型在 partner_types 中
+      for (let i = 0; i < businessTypes.length; i++) {
+        await sb.from('partner_types').upsert({ id: i + 1, name: businessTypes[i] }, { onConflict: 'id' });
       }
     }
 
@@ -725,19 +790,12 @@ function initRealtimeSubscription() {
   _realtimeChannel = sb.channel('partner-all-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_records' }, payload => {
       const { eventType, new: newRow, old: oldRow } = payload;
-      // 去重：忽略自己刚发起的操作
       if (eventType === 'DELETE' && _recentLocalChanges.has('del_' + oldRow.id)) return;
       if ((eventType === 'INSERT' || eventType === 'UPDATE') && _recentLocalChanges.has('up_' + newRow.id)) return;
       handleRecordChange(payload);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_types' }, payload => {
       handleTypeChange(payload);
-    })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_admins' }, payload => {
-      handleAdminChange(payload);
-    })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_online' }, payload => {
-      handleOnlineChange(payload);
     })
     .subscribe();
 }
@@ -763,48 +821,58 @@ function handleRecordChange(payload) {
 
 async function handleTypeChange(payload) {
   const { eventType, new: newRow } = payload;
+  // 如果是管理员/在线用户的变化，需要特殊处理
+  if (newRow && newRow.name && newRow.name.startsWith('__admin__:')) {
+    const admin = decodeAdmin(newRow.name);
+    if (admin) {
+      if (eventType === 'INSERT' || eventType === 'UPDATE') {
+        if (!admins.some(a => a.wechat_id === admin.wechat_id)) {
+          admins.push(admin);
+        } else {
+          const idx = admins.findIndex(a => a.wechat_id === admin.wechat_id);
+          admins[idx] = admin;
+        }
+      }
+      checkUserRole();
+      updateUI();
+      renderAdminPanel();
+      return;
+    }
+  }
+  if (newRow && newRow.name && newRow.name.startsWith('__online__:')) {
+    const online = decodeOnline(newRow.name);
+    if (online) {
+      if (eventType === 'INSERT' || eventType === 'UPDATE') {
+        const idx = onlineUsers.findIndex(u => u.wechat_id === online.wechat_id);
+        if (idx >= 0) onlineUsers[idx] = online; else onlineUsers.push(online);
+      }
+      renderAdminPanel();
+      return;
+    }
+  }
+  // 普通业务类型变化
   if (eventType === 'INSERT') {
-    if (!businessTypes.includes(newRow.name)) businessTypes.push(newRow.name);
-  } else if (eventType === 'UPDATE') {
-    // 需要重新排序加载
+    if (newRow.name && !newRow.name.startsWith('__') && !businessTypes.includes(newRow.name)) {
+      businessTypes.push(newRow.name);
+    }
+  } else {
+    // UPDATE 或 DELETE，重新加载所有类型数据
     const { data } = await sb.from('partner_types').select('*').order('id');
-    if (data) businessTypes = data.map(t => t.name);
-  } else if (eventType === 'DELETE') {
-    // 不确定删了哪个name，重新加载
-    const { data } = await sb.from('partner_types').select('*').order('id');
-    if (data) businessTypes = data.map(t => t.name);
+    if (data) {
+      const parsed = parseTypesRows(data);
+      businessTypes = parsed.types;
+      admins = parsed.adminRows;
+      onlineUsers = parsed.onlineRows;
+      if (!admins.some(a => a.wechat_id === SUPER_ADMIN_WECHAT)) {
+        admins.push({ wechat_id: SUPER_ADMIN_WECHAT, nickname: SUPER_ADMIN_WECHAT });
+      }
+    }
   }
   localStorage.setItem('partnerTypes', JSON.stringify(businessTypes));
   refreshTypeSelects();
   applyFilter();
-}
-
-async function handleAdminChange(payload) {
-  const { eventType, new: newRow, old: oldRow } = payload;
-  if (eventType === 'INSERT') {
-    if (!admins.some(a => a.wechat_id === newRow.wechat_id)) {
-      admins.push({ wechat_id: newRow.wechat_id, nickname: newRow.nickname || newRow.wechat_id });
-    }
-  } else if (eventType === 'DELETE') {
-    admins = admins.filter(a => a.wechat_id !== oldRow.wechat_id);
-  }
   checkUserRole();
   updateUI();
-  renderAdminPanel();
-}
-
-function handleOnlineChange(payload) {
-  const { eventType, new: newRow, old: oldRow } = payload;
-  if (eventType === 'INSERT') {
-    if (!onlineUsers.some(u => u.wechat_id === newRow.wechat_id)) {
-      onlineUsers.push(newRow);
-    }
-  } else if (eventType === 'UPDATE') {
-    const idx = onlineUsers.findIndex(u => u.wechat_id === newRow.wechat_id);
-    if (idx >= 0) onlineUsers[idx] = newRow; else onlineUsers.push(newRow);
-  } else if (eventType === 'DELETE') {
-    onlineUsers = onlineUsers.filter(u => u.wechat_id !== oldRow.wechat_id);
-  }
   renderAdminPanel();
 }
 
@@ -812,7 +880,11 @@ function handleOnlineChange(payload) {
 async function promoteToAdmin(wechatId, nickname) {
   if (!requireAdmin()) return;
   try {
-    const { error } = await sb.from('partner_admins').upsert({ wechat_id: wechatId, nickname: nickname || wechatId }, { onConflict: 'wechat_id' });
+    const encoded = encodeAdmin(wechatId, nickname || wechatId);
+    const { error } = await sb.from('partner_types').upsert({
+      id: adminId(wechatId),
+      name: encoded
+    }, { onConflict: 'id' });
     if (error) { showToast('设置管理员失败: ' + error.message); return; }
     if (!admins.some(a => a.wechat_id === wechatId)) {
       admins.push({ wechat_id: wechatId, nickname: nickname || wechatId });
@@ -831,7 +903,7 @@ async function removeAdmin(wechatId) {
   if (wechatId === SUPER_ADMIN_WECHAT) { showToast('无法移除超级管理员'); return; }
   if (wechatId === currentUser.wechat_id) { showToast('无法移除自己'); return; }
   try {
-    const { error } = await sb.from('partner_admins').delete().eq('wechat_id', wechatId);
+    const { error } = await sb.from('partner_types').delete().eq('id', adminId(wechatId));
     if (error) { showToast('移除管理员失败: ' + error.message); return; }
     admins = admins.filter(a => a.wechat_id !== wechatId);
     checkUserRole();
