@@ -404,6 +404,62 @@ let currentUser = null;   // {wechat_id, nickname, role: 'admin'|'guest'}
 // 默认超级管理员微信号
 const SUPER_ADMIN_WECHAT = 'xijiekongjian';
 
+// ========== 已删除记录追踪（防止旧版Tab推回已删除数据） ==========
+// 使用 partner_types 表 id=999 存储 JSON 格式的已删除ID列表
+const DELETED_IDS_ROW_ID = 999;
+
+async function addDeletedId(id) {
+  try {
+    // 读取当前已删除列表
+    const { data } = await sb.from('partner_types').select('name').eq('id', DELETED_IDS_ROW_ID).single();
+    let deletedIds = [];
+    if (data && data.name && data.name.startsWith('__deleted__:')) {
+      try { deletedIds = JSON.parse(data.name.substring('__deleted__:'.length)); } catch {}
+    }
+    // 添加新ID
+    if (!deletedIds.includes(id)) {
+      deletedIds.push(id);
+      // 只保留最近1000个
+      if (deletedIds.length > 1000) deletedIds = deletedIds.slice(-1000);
+    }
+    // 写回
+    await sb.from('partner_types').upsert({
+      id: DELETED_IDS_ROW_ID,
+      name: '__deleted__:' + JSON.stringify(deletedIds)
+    }, { onConflict: 'id' });
+    console.log('[deleted-tracking] 已记录删除 id=' + id + ', 列表长度=' + deletedIds.length);
+  } catch (e) {
+    console.warn('[deleted-tracking] 记录删除ID失败:', e);
+  }
+}
+
+async function getDeletedIds() {
+  try {
+    const { data } = await sb.from('partner_types').select('name').eq('id', DELETED_IDS_ROW_ID).single();
+    if (data && data.name && data.name.startsWith('__deleted__:')) {
+      return JSON.parse(data.name.substring('__deleted__:'.length));
+    }
+  } catch (e) {}
+  return [];
+}
+
+async function cleanOldDeletedIds() {
+  // 清理已删除列表中不再存在于远端的ID（节省空间）
+  try {
+    const deletedIds = await getDeletedIds();
+    if (deletedIds.length === 0) return;
+    const { data: existingRecords } = await sb.from('partner_records').select('id');
+    const existingIds = new Set((existingRecords || []).map(r => r.id));
+    const stillRelevant = deletedIds.filter(id => !existingIds.has(id));
+    if (stillRelevant.length < deletedIds.length) {
+      await sb.from('partner_types').upsert({
+        id: DELETED_IDS_ROW_ID,
+        name: '__deleted__:' + JSON.stringify(stillRelevant.slice(-500))
+      }, { onConflict: 'id' });
+    }
+  } catch (e) {}
+}
+
 // ========== partner_types 编码方案 ==========
 // id 1-1000: 业务类型 (name = 类型名)
 // id 1001-999999: 管理员 (name = '__admin__:wechat_id:nickname')
@@ -451,6 +507,12 @@ function parseTypesRows(rows) {
       adminRows.push({ ...decodeAdmin(row.name), _id: row.id });
     } else if (row.name.startsWith('__online__:')) {
       onlineRows.push({ ...decodeOnline(row.name), _id: row.id });
+    } else if (row.name.startsWith('__deleted__:')) {
+      // 已删除记录追踪数据，跳过
+      continue;
+    } else if (row.id === DELETED_IDS_ROW_ID) {
+      // 已删除ID列表行，跳过
+      continue;
     } else {
       types.push(row.name);
     }
@@ -630,21 +692,41 @@ async function fullDataSync() {
     // 同步记录 —— 远端优先（以远端数据为准）
     const { data: recordsData, error: recErr } = await sb.from('partner_records').select('*').order('id');
     if (recErr) { console.warn('[sync] 查询远端记录失败:', recErr.message); return; }
+
+    // 获取已删除ID列表（防止旧版Tab推回已删除数据）
+    const deletedIds = await getDeletedIds();
+    const deletedSet = new Set(deletedIds);
+
+    // 如果远端有记录在"已删除"列表中，清理掉
     if (recordsData && recordsData.length > 0) {
-      // 过滤掉脏数据（__online__/__test__ 前缀不应出现在 partner_records）
-      const cleanRecordsData = recordsData.filter(r => r.name && !r.name.startsWith('__online__') && !r.name.startsWith('__test__'));
-      const remoteRecords = cleanRecordsData.map(rowToRecord);
+      const toClean = recordsData.filter(r => deletedSet.has(r.id));
+      if (toClean.length > 0) {
+        console.log('[sync] 发现远端有已标记删除的记录，清理中:', toClean.map(r => r.id));
+        for (const r of toClean) {
+          await sb.from('partner_records').delete().eq('id', r.id);
+        }
+      }
+    }
+
+    // 过滤掉脏数据（__online__/__test__ 前缀不应出现在 partner_records）
+    const cleanRecordsData = (recordsData || []).filter(r => r.name && !r.name.startsWith('__online__') && !r.name.startsWith('__test__'));
+
+    if (cleanRecordsData.length > 0) {
       let changed = false;
 
       // 以远端为基准（远端是source of truth）
       const remoteMap = new Map(remoteRecords.map(r => [r.id, r]));
       const localMap = new Map(records.map(r => [r.id, r]));
       
-      // 本地有但远端没有的记录 → 不推送！远端没有说明已被其他客户端删除
+      // 本地有但远端没有的记录 → 不推送！
       // 除非是刚刚在本地新增且还没来得及同步的（_recentLocalChanges 中有 up_ 标记）
+      // 且不在已删除列表中
       for (const [id, lr] of localMap) {
         if (!remoteMap.has(id)) {
-          if (_recentLocalChanges.has('up_' + id)) {
+          if (deletedSet.has(id)) {
+            // 已在远端标记删除，从本地也移除
+            console.log('[sync] 本地记录 id=' + id + ' 在已删除列表中，移除');
+          } else if (_recentLocalChanges.has('up_' + id)) {
             // 刚刚本地新增/编辑的，确实需要推送
             console.log('[sync] 本地新增/编辑记录未在远端，推送中:', id);
             const row = recordToRow(lr);
@@ -676,9 +758,13 @@ async function fullDataSync() {
         console.log('[sync] 记录已从远端同步更新');
       }
     } else if (records.length > 0) {
-      // 远端为空但本地有数据 → 只有标记为本地新增的才推送，其余视为远端已清除
+      // 远端为空但本地有数据 → 只有不在已删除列表中且标记为本地新增的才推送
       let pushedAny = false;
       for (const rec of records) {
+        if (deletedSet.has(rec.id)) {
+          console.log('[sync] 本地记录 id=' + rec.id + ' 在已删除列表中，跳过推送');
+          continue;
+        }
         if (_recentLocalChanges.has('up_' + rec.id)) {
           const row = recordToRow(rec);
           const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
@@ -1604,6 +1690,8 @@ function confirmDelete() {
   // 立即同步清理 localStorage 缓存，防止 fullDataSync 把旧数据推回远端
   localStorage.setItem('partnerRecords', JSON.stringify(records));
   saveData({ deletedRecordId: idToDelete }).then(() => {
+    // 在远端记录已删除的ID，防止旧版Tab推回
+    addDeletedId(idToDelete);
     showToast('删除成功');
   });
   closeConfirm();
