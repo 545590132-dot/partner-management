@@ -386,8 +386,7 @@ let editingId = null;
 let deletingId = null;
 let currentPriority = 3;
 let filteredRecords = [];
-let _syncingFromRemote = false;
-let _lastSyncTime = 0; // 记录最后一次自己发起的同步时间
+let _recentLocalChanges = new Set(); // 记录最近本地操作的记录ID，用于去重
 
 // 当前登录用户
 let currentUser = null;   // {wechat_id, nickname, role: 'admin'|'guest'}
@@ -451,12 +450,17 @@ function requireAdmin(action) {
 async function registerOnline() {
   if (!currentUser) return;
   try {
-    await sb.from('partner_online').upsert({
+    const { error } = await sb.from('partner_online').upsert({
       wechat_id: currentUser.wechat_id,
       nickname: currentUser.nickname,
       last_seen: new Date().toISOString()
     }, { onConflict: 'wechat_id' });
-  } catch (e) { console.warn('注册在线状态失败:', e); }
+    if (error) {
+      console.error('❌ 注册在线状态失败:', error.message, error.details, error.hint);
+    } else {
+      console.log('[online] 心跳成功:', currentUser.wechat_id);
+    }
+  } catch (e) { console.error('❌ 注册在线状态异常:', e); }
 }
 
 // 定时心跳（每30秒）
@@ -476,11 +480,14 @@ setInterval(cleanOfflineUsers, 60000);
 // 定时刷新在线用户列表（补充 Realtime 可能丢失的更新）
 async function refreshOnlineUsers() {
   try {
-    const { data: onlineData } = await sb.from('partner_online').select('*').order('last_seen', { ascending: false });
+    const { data: onlineData, error: onlineErr } = await sb.from('partner_online').select('*').order('last_seen', { ascending: false });
+    if (onlineErr) { console.error('❌ 查询在线用户失败:', onlineErr.message); return; }
     if (onlineData) {
       onlineUsers = onlineData;
+      console.log('[online] 当前在线用户:', onlineData.map(u => u.nickname || u.wechat_id).join(', ') || '无');
       // 同时刷新管理员列表，确保角色判断准确
-      const { data: adminsData } = await sb.from('partner_admins').select('*');
+      const { data: adminsData, error: adminsErr } = await sb.from('partner_admins').select('*');
+      if (adminsErr) { console.error('❌ 查询管理员失败:', adminsErr.message); return; }
       if (adminsData) {
         admins = adminsData.map(a => ({ wechat_id: a.wechat_id, nickname: a.nickname || a.wechat_id }));
         // 确保超级管理员在列表中
@@ -491,29 +498,61 @@ async function refreshOnlineUsers() {
       checkUserRole();
       renderAdminPanel();
     }
-  } catch (e) { console.warn('刷新在线用户失败:', e); }
+  } catch (e) { console.error('❌ 刷新在线用户失败:', e); }
 }
 setInterval(refreshOnlineUsers, 10000);
 
 // 定时全量数据同步（确保多管理员之间数据一致性）
 async function fullDataSync() {
+  if (!currentUser) return;
   try {
-    // 同步记录
-    const { data: recordsData } = await sb.from('partner_records').select('*').order('id');
+    // 同步记录 —— 智能合并，不丢失本地新增
+    const { data: recordsData, error: recErr } = await sb.from('partner_records').select('*').order('id');
+    if (recErr) { console.warn('[sync] 查询远端记录失败:', recErr.message); return; }
     if (recordsData) {
       const remoteRecords = recordsData.map(rowToRecord);
-      // 只在数据有变化时更新，避免不必要的 UI 刷新
-      const remoteIds = new Set(remoteRecords.map(r => r.id));
-      const localIds = new Set(records.map(r => r.id));
-      let changed = remoteIds.size !== localIds.size || [...remoteIds].some(id => !localIds.has(id));
-      if (!changed) {
-        for (const rr of remoteRecords) {
-          const lr = records.find(r => r.id === rr.id);
-          if (!lr || JSON.stringify(lr) !== JSON.stringify(rr)) { changed = true; break; }
+      const remoteMap = new Map(remoteRecords.map(r => [r.id, r]));
+      const localMap = new Map(records.map(r => [r.id, r]));
+      let changed = false;
+
+      // 合并策略：远端有但本地没有 → 添加；远端和本地都有 → 以较新的为准
+      // 本地有但远端没有 → 本地刚新建可能还没同步，保留本地并尝试推送
+      const merged = new Map();
+
+      // 加入所有远端记录
+      for (const [id, rr] of remoteMap) {
+        if (localMap.has(id)) {
+          // 两边都有，比较内容
+          const lr = localMap.get(id);
+          if (JSON.stringify(lr) !== JSON.stringify(rr)) {
+            // 内容不同，以远端为准（其他管理员可能编辑过）
+            merged.set(id, rr);
+            changed = true;
+          } else {
+            merged.set(id, lr);
+          }
+        } else {
+          // 远端有本地没有，添加
+          merged.set(id, rr);
+          changed = true;
         }
       }
+
+      // 本地有但远端没有的记录 → 保留并推送
+      for (const [id, lr] of localMap) {
+        if (!remoteMap.has(id)) {
+          merged.set(id, lr);
+          // 尝试推送到远端
+          console.log('[sync] 本地记录未在远端，推送中:', id);
+          const row = recordToRow(lr);
+          const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
+          if (error) console.error('[sync] 推送失败:', error.message);
+        }
+      }
+
       if (changed) {
-        records = remoteRecords;
+        records = [...merged.values()];
+        records.sort((a, b) => (b.priority || 1) - (a.priority || 1));
         localStorage.setItem('partnerRecords', JSON.stringify(records));
         refreshTypeSelects();
         applyFilter();
@@ -522,7 +561,8 @@ async function fullDataSync() {
     }
 
     // 同步业务类型
-    const { data: typesData } = await sb.from('partner_types').select('*').order('id');
+    const { data: typesData, error: typeErr } = await sb.from('partner_types').select('*').order('id');
+    if (typeErr) { console.warn('[sync] 查询远端类型失败:', typeErr.message); return; }
     if (typesData && typesData.length > 0) {
       const remoteTypes = typesData.map(t => t.name);
       if (JSON.stringify(remoteTypes) !== JSON.stringify(businessTypes)) {
@@ -560,21 +600,24 @@ function rowToRecord(row) {
 async function saveData(opts = {}) {
   localStorage.setItem('partnerRecords', JSON.stringify(records));
   localStorage.setItem('partnerTypes', JSON.stringify(businessTypes));
-  try {
-    _syncingFromRemote = true;
-    _lastSyncTime = Date.now();
 
+  try {
     if (opts.deletedRecordId != null) {
+      _recentLocalChanges.add('del_' + opts.deletedRecordId);
       const { error } = await sb.from('partner_records').delete().eq('id', opts.deletedRecordId);
-      if (error) console.warn('删除记录同步失败:', error.message);
+      if (error) { console.error('❌ 删除记录失败:', error.message); showToast('同步失败: ' + error.message); return; }
+      setTimeout(() => _recentLocalChanges.delete('del_' + opts.deletedRecordId), 5000);
     } else if (opts.upsertRecordId != null) {
+      _recentLocalChanges.add('up_' + opts.upsertRecordId);
       const rec = records.find(r => r.id === opts.upsertRecordId);
       if (rec) {
         const row = recordToRow(rec);
         const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
-        if (error) console.warn('同步记录失败:', error.message);
+        if (error) { console.error('❌ 同步记录失败:', error.message); showToast('同步失败: ' + error.message); return; }
       }
+      setTimeout(() => _recentLocalChanges.delete('up_' + opts.upsertRecordId), 5000);
     } else {
+      // 全量同步（首次或回写）
       for (const rec of records) {
         const row = recordToRow(rec);
         const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
@@ -599,9 +642,8 @@ async function saveData(opts = {}) {
       }
     }
   } catch (err) {
-    console.warn('Supabase 同步异常:', err);
-  } finally {
-    setTimeout(() => { _syncingFromRemote = false; }, 800);
+    console.error('❌ Supabase 同步异常:', err);
+    showToast('数据同步异常，请检查网络');
   }
 }
 
@@ -641,16 +683,26 @@ async function loadFromSupabase() {
 
     // Supabase 为空时回写本地缓存
     if (records.length === 0 && localStorage.getItem('partnerRecords')) {
-      records = JSON.parse(localStorage.getItem('partnerRecords') || '[]');
-      if (records.length > 0) {
+      const localRecords = JSON.parse(localStorage.getItem('partnerRecords') || '[]');
+      if (localRecords.length > 0) {
+        records = localRecords;
         showToast('正在同步本地数据到云端...');
-        await saveData();
+        // 逐条 upsert 确保可靠
+        for (const rec of records) {
+          const row = recordToRow(rec);
+          const { error } = await sb.from('partner_records').upsert(row, { onConflict: 'id' });
+          if (error) console.error('回写记录失败:', error.message, row);
+        }
       }
     }
     if (businessTypes.length === 0) {
       const localTypes = JSON.parse(localStorage.getItem('partnerTypes') || '[]');
       businessTypes = localTypes.length > 0 ? localTypes : ['技术服务','营销推广','供应链','物流配送','金融服务','内容创作'];
-      if (businessTypes.length > 0) await saveData();
+      if (businessTypes.length > 0) {
+        for (let i = 0; i < businessTypes.length; i++) {
+          await sb.from('partner_types').upsert({ id: i + 1, name: businessTypes[i] }, { onConflict: 'id' });
+        }
+      }
     }
 
     localStorage.setItem('partnerRecords', JSON.stringify(records));
@@ -672,12 +724,13 @@ function initRealtimeSubscription() {
   }
   _realtimeChannel = sb.channel('partner-all-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_records' }, payload => {
-      // 只忽略自己刚发起的变更（3秒内），不阻塞其他管理员的变更
-      if (_syncingFromRemote && Date.now() - _lastSyncTime < 3000) return;
+      const { eventType, new: newRow, old: oldRow } = payload;
+      // 去重：忽略自己刚发起的操作
+      if (eventType === 'DELETE' && _recentLocalChanges.has('del_' + oldRow.id)) return;
+      if ((eventType === 'INSERT' || eventType === 'UPDATE') && _recentLocalChanges.has('up_' + newRow.id)) return;
       handleRecordChange(payload);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_types' }, payload => {
-      if (_syncingFromRemote && Date.now() - _lastSyncTime < 3000) return;
       handleTypeChange(payload);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'partner_admins' }, payload => {
@@ -759,8 +812,6 @@ function handleOnlineChange(payload) {
 async function promoteToAdmin(wechatId, nickname) {
   if (!requireAdmin()) return;
   try {
-    _syncingFromRemote = true;
-    _lastSyncTime = Date.now();
     const { error } = await sb.from('partner_admins').upsert({ wechat_id: wechatId, nickname: nickname || wechatId }, { onConflict: 'wechat_id' });
     if (error) { showToast('设置管理员失败: ' + error.message); return; }
     if (!admins.some(a => a.wechat_id === wechatId)) {
@@ -771,8 +822,7 @@ async function promoteToAdmin(wechatId, nickname) {
     showToast(`已将「${nickname || wechatId}」设为管理员`);
   } catch (e) {
     console.warn('设置管理员失败:', e);
-  } finally {
-    setTimeout(() => { _syncingFromRemote = false; }, 800);
+    showToast('设置管理员失败');
   }
 }
 
@@ -781,8 +831,6 @@ async function removeAdmin(wechatId) {
   if (wechatId === SUPER_ADMIN_WECHAT) { showToast('无法移除超级管理员'); return; }
   if (wechatId === currentUser.wechat_id) { showToast('无法移除自己'); return; }
   try {
-    _syncingFromRemote = true;
-    _lastSyncTime = Date.now();
     const { error } = await sb.from('partner_admins').delete().eq('wechat_id', wechatId);
     if (error) { showToast('移除管理员失败: ' + error.message); return; }
     admins = admins.filter(a => a.wechat_id !== wechatId);
@@ -791,8 +839,7 @@ async function removeAdmin(wechatId) {
     showToast('已移除管理员权限');
   } catch (e) {
     console.warn('移除管理员失败:', e);
-  } finally {
-    setTimeout(() => { _syncingFromRemote = false; }, 800);
+    showToast('移除管理员失败');
   }
 }
 
@@ -870,17 +917,20 @@ function updateUI() {
 function autoEvalContractStatus() {
   const today = new Date();
   today.setHours(0,0,0,0);
-  let updated = 0;
+  let updatedIds = [];
   records.forEach(r => {
     if (r.contractExpiry && r.contractStatus !== 'expired') {
       const exp = new Date(r.contractExpiry);
       exp.setHours(0,0,0,0);
-      if (exp < today) { r.contractStatus = 'expired'; updated++; }
+      if (exp < today) { r.contractStatus = 'expired'; updatedIds.push(r.id); }
     }
   });
-  if (updated > 0) {
-    saveData();
-    showToast(`已自动更新 ${updated} 条合同状态为「已过期」`);
+  if (updatedIds.length > 0) {
+    // 逐条同步变更的记录，而非全量同步
+    for (const id of updatedIds) {
+      saveData({ upsertRecordId: id });
+    }
+    showToast(`已自动更新 ${updatedIds.length} 条合同状态为「已过期」`);
   }
 }
 
@@ -1173,11 +1223,15 @@ function saveRecord() {
   if (editingId) {
     const idx = records.findIndex(x => x.id === editingId);
     if (idx >= 0) records[idx] = { ...records[idx], ...obj };
-    saveData({ upsertRecordId: editingId });
+    saveData({ upsertRecordId: editingId }).then(() => {
+      showToast('保存成功');
+    });
   } else {
     const newId = Date.now();
     records.push({ id: newId, ...obj });
-    saveData({ upsertRecordId: newId });
+    saveData({ upsertRecordId: newId }).then(() => {
+      showToast('新增成功');
+    });
   }
   closeModal();
   applyFilter();
@@ -1280,7 +1334,9 @@ function confirmDelete() {
   if (!deletingId) return;
   const idToDelete = deletingId;
   records = records.filter(r => r.id !== idToDelete);
-  saveData({ deletedRecordId: idToDelete });
+  saveData({ deletedRecordId: idToDelete }).then(() => {
+    showToast('删除成功');
+  });
   closeConfirm();
   applyFilter();
 }
@@ -1309,10 +1365,10 @@ async function initApp() {
   applyFilter();
   renderAdminPanel();
   initRealtimeSubscription();
-  // 首次加载后立即刷新在线用户和管理员列表
-  refreshOnlineUsers();
-  // 3秒后做一次全量数据同步，确保与其他管理员数据一致
-  setTimeout(fullDataSync, 3000);
+  // 立即刷新在线用户和管理员列表
+  await refreshOnlineUsers();
+  // 2秒后做一次全量数据同步，确保与其他管理员数据一致
+  setTimeout(fullDataSync, 2000);
 }
 
 // 启动：检查是否已登录
