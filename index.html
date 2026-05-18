@@ -1577,15 +1577,22 @@ async function saveRecord() {
     priority: currentPriority,
     contractFile: window._currentContractFile || '',
   };
-  if (editingId) {
+    if (editingId) {
     const idx = records.findIndex(x => x.id === editingId);
     if (idx >= 0) records[idx] = { ...records[idx], ...obj };
     await saveData({ upsertRecordId: editingId });
     showToast('保存成功');
   } else {
-    const newId = Date.now();
-    records.push({ id: newId, ...obj });
-    await saveData({ upsertRecordId: newId });
+    // 生成安全的ID：毫秒时间戳对 PostgreSQL integer 最大值取模，加随机数保唯一
+    // integer max = 2147483647，取模后 + 随机偏移确保不超范围且不易碰撞
+    const MAX_INT = 2147483647;
+    const base = Date.now() % 2000000000; // 保持在20亿以内
+    const rand = Math.floor(Math.random() * 1000);
+    const newId = base - rand; // 减随机数确保唯一，一定安全
+    // 确认不是已存在的ID
+    const safeId = records.some(r => r.id === newId) ? (base - rand - 1) : newId;
+    records.push({ id: safeId, ...obj });
+    await saveData({ upsertRecordId: safeId });
     showToast('新增成功');
   }
   closeModal();
