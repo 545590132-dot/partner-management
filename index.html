@@ -714,6 +714,9 @@ async function fullDataSync() {
     if (cleanRecordsData.length > 0) {
       let changed = false;
 
+      // 将远端原始行转换为本地记录格式
+      const remoteRecords = cleanRecordsData.map(rowToRecord);
+
       // 以远端为基准（远端是source of truth）
       const remoteMap = new Map(remoteRecords.map(r => [r.id, r]));
       const localMap = new Map(records.map(r => [r.id, r]));
@@ -884,7 +887,7 @@ async function saveData(opts = {}) {
 
     if (opts.typeDeletedName) {
       // 查找该类型名的 id 并删除
-      const { data: typeRows } = await sb.from('partner_types').select('id,name').lt('id', 1001);
+      const { data: typeRows } = await sb.from('partner_types').select('id,name').lt('id', 1001).neq('id', DELETED_IDS_ROW_ID);
       if (typeRows) {
         const target = typeRows.find(t => t.name === opts.typeDeletedName);
         if (target) {
@@ -892,17 +895,18 @@ async function saveData(opts = {}) {
         }
       }
     }
-    // 同步业务类型（只处理 id < 1001 的行，不影响管理员和在线用户）
-    const { data: currentTypeRows } = await sb.from('partner_types').select('id,name').lt('id', 1001).order('id');
+    // 同步业务类型（只处理 id < 1001 且不是 DELETED_IDS_ROW_ID 的行）
+    const { data: currentTypeRows } = await sb.from('partner_types').select('id,name').lt('id', 1001).neq('id', DELETED_IDS_ROW_ID).order('id');
     const existingTypeIds = (currentTypeRows || []).map(t => t.id);
     for (let i = 0; i < businessTypes.length; i++) {
       const typeRow = { id: i + 1, name: businessTypes[i] };
       const { error } = await sb.from('partner_types').upsert(typeRow, { onConflict: 'id' });
       if (error) console.warn('同步类型失败:', error.message);
     }
-    // 删除多余的业务类型行（不删管理员和在线用户行）
+    // 删除多余的业务类型行（不删管理员/在线用户/已删除追踪行）
     if (existingTypeIds.length > businessTypes.length) {
       for (let i = businessTypes.length + 1; i <= Math.max(...existingTypeIds); i++) {
+        if (i === DELETED_IDS_ROW_ID) continue; // 跳过已删除追踪行
         await sb.from('partner_types').delete().eq('id', i);
       }
     }
@@ -1556,7 +1560,7 @@ function openEditModal(id) {
 
 function closeModal() { document.getElementById('editModal').classList.remove('active'); }
 
-function saveRecord() {
+async function saveRecord() {
   if (!requireAdmin()) return;
   const name = document.getElementById('fieldName').value.trim();
   if (!name) { alert('请填写合作方名称'); return; }
@@ -1576,15 +1580,13 @@ function saveRecord() {
   if (editingId) {
     const idx = records.findIndex(x => x.id === editingId);
     if (idx >= 0) records[idx] = { ...records[idx], ...obj };
-    saveData({ upsertRecordId: editingId }).then(() => {
-      showToast('保存成功');
-    });
+    await saveData({ upsertRecordId: editingId });
+    showToast('保存成功');
   } else {
     const newId = Date.now();
     records.push({ id: newId, ...obj });
-    saveData({ upsertRecordId: newId }).then(() => {
-      showToast('新增成功');
-    });
+    await saveData({ upsertRecordId: newId });
+    showToast('新增成功');
   }
   closeModal();
   applyFilter();
