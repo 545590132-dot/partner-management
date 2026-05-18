@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>代理服务商管理 v2.2</title>
+<title>代理服务商管理 v2.3</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 13px; color: #2C2C2A; background: #F7F6F2; min-height: 100vh; }
@@ -744,6 +744,8 @@ async function fullDataSync() {
       }
 
       // 如果远端数据与本地不同，以远端为准更新本地
+      // ⚠️ 修复：合并本地新增记录（_recentLocalChanges 中有 up_ 标记但远端尚未同步的）
+      //    防止 saveData 刚写入但 fullDataSync 下一周期把本地新增覆盖掉
       const localIds = records.map(r => r.id).sort();
       const remoteIds = remoteRecords.map(r => r.id).sort();
       const idsDiffer = JSON.stringify(remoteIds) !== JSON.stringify(localIds);
@@ -752,13 +754,25 @@ async function fullDataSync() {
         return !lr || JSON.stringify(lr) !== JSON.stringify(rr);
       });
       if (idsDiffer || contentDiffers) {
-        records = remoteRecords;
+        // 找出本地新增但远端还没有的记录（已写入但 fullDataSync 尚未读取到）
+        const pendingNewRecords = records.filter(r =>
+          _recentLocalChanges.has('up_' + r.id) && !remoteMap.has(r.id)
+        );
+        if (pendingNewRecords.length > 0) {
+          console.log('[sync] 发现本地新增但远端未同步的记录，合并保留:', pendingNewRecords.map(r => r.id));
+        }
+        // 远端 + 本地新增记录（去重，远端优先）
+        const merged = [...remoteRecords];
+        for (const rec of pendingNewRecords) {
+          if (!merged.some(r => r.id === rec.id)) merged.push(rec);
+        }
+        records = merged;
         records.sort((a, b) => (b.priority || 1) - (a.priority || 1));
         localStorage.setItem('partnerRecords', JSON.stringify(records));
         refreshTypeSelects();
         applyFilter();
         changed = true;
-        console.log('[sync] 记录已从远端同步更新');
+        console.log('[sync] 记录已从远端同步更新（含待同步新增）');
       }
     } else if (records.length > 0) {
       // 远端为空但本地有数据 → 只有不在已删除列表中且标记为本地新增的才推送
@@ -1585,12 +1599,14 @@ async function saveRecord() {
   } else {
     // 生成安全的ID：毫秒时间戳对 PostgreSQL integer 最大值取模，加随机数保唯一
     // integer max = 2147483647，取模后 + 随机偏移确保不超范围且不易碰撞
-    const MAX_INT = 2147483647;
     const base = Date.now() % 2000000000; // 保持在20亿以内
     const rand = Math.floor(Math.random() * 1000);
     const newId = base - rand; // 减随机数确保唯一，一定安全
     // 确认不是已存在的ID
     const safeId = records.some(r => r.id === newId) ? (base - rand - 1) : newId;
+    // ⚠️ 关键修复：在 push 之前就标记，避免与 fullDataSync 的竞争窗口
+    // 否则 fullDataSync 可能在 push 之后、saveData 标记之前运行，把新记录当成被删除处理
+    _recentLocalChanges.add('up_' + safeId);
     records.push({ id: safeId, ...obj });
     await saveData({ upsertRecordId: safeId });
     showToast('新增成功');
